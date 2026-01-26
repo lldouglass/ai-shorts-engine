@@ -11,13 +11,27 @@ from uuid import UUID, uuid4
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from shorts_engine.adapters.publisher.youtube import YouTubeAccountState
+# Import account states from domain to avoid circular imports
+from shorts_engine.domain.account_state import (
+    YouTubeAccountState,
+    InstagramAccountState,
+    TikTokAccountState,
+)
 from shorts_engine.adapters.publisher.youtube_oauth import (
     OAuthCredentials,
     OAuthError,
     refresh_access_token,
     run_device_flow,
     run_local_callback_flow,
+)
+from shorts_engine.adapters.publisher.instagram_oauth import (
+    InstagramOAuthError,
+    run_instagram_oauth_flow,
+)
+from shorts_engine.adapters.publisher.tiktok_oauth import (
+    TikTokOAuthError,
+    check_direct_post_capability,
+    run_tiktok_oauth_flow,
 )
 from shorts_engine.config import settings
 from shorts_engine.db.models import (
@@ -444,3 +458,258 @@ def mark_account_revoked(
     session.commit()
 
     logger.warning(f"Marked account '{account.label}' as revoked: {reason}")
+
+
+def connect_instagram_account(
+    session: Session,
+    label: str,
+) -> PlatformAccountModel:
+    """Connect an Instagram account using OAuth via Facebook Login.
+
+    Args:
+        session: Database session.
+        label: User-friendly label for the account (e.g., "Client IG").
+
+    Returns:
+        The created PlatformAccountModel.
+
+    Raises:
+        InstagramOAuthError: If OAuth flow fails.
+        AccountError: If account already exists with same label.
+    """
+    # Check if account with this label already exists
+    existing = session.execute(
+        select(PlatformAccountModel).where(
+            PlatformAccountModel.platform == "instagram",
+            PlatformAccountModel.label == label,
+        )
+    ).scalar_one_or_none()
+
+    if existing:
+        raise AccountError(
+            f"Instagram account with label '{label}' already exists. "
+            "Use a different label or disconnect the existing account first."
+        )
+
+    # Run OAuth flow
+    credentials = run_instagram_oauth_flow()
+
+    # Create account record
+    account = PlatformAccountModel(
+        id=uuid4(),
+        platform="instagram",
+        label=label,
+        external_id=credentials.instagram_account_id,
+        external_name=credentials.instagram_username,
+        encrypted_refresh_token=None,  # Instagram uses long-lived tokens
+        encrypted_access_token=encrypt_token(credentials.access_token),
+        token_expires_at=(
+            datetime.now(timezone.utc) + timedelta(seconds=credentials.expires_in)
+            if credentials.expires_in
+            else None
+        ),
+        scopes="instagram_basic,instagram_content_publish,instagram_manage_insights,instagram_manage_comments",
+        status="active",
+        uploads_today=0,
+        capabilities={"direct_post": True},  # Instagram always supports direct post via API
+        metadata_={
+            "connected_at": datetime.now(timezone.utc).isoformat(),
+            "facebook_page_id": credentials.facebook_page_id,
+        },
+    )
+
+    session.add(account)
+    session.commit()
+    session.refresh(account)
+
+    logger.info(
+        f"Connected Instagram account: {credentials.instagram_username} "
+        f"(IG ID: {credentials.instagram_account_id}) as '{label}'"
+    )
+
+    return account
+
+
+def connect_tiktok_account(
+    session: Session,
+    label: str,
+) -> PlatformAccountModel:
+    """Connect a TikTok account using OAuth.
+
+    Args:
+        session: Database session.
+        label: User-friendly label for the account (e.g., "Client TikTok").
+
+    Returns:
+        The created PlatformAccountModel.
+
+    Raises:
+        TikTokOAuthError: If OAuth flow fails.
+        AccountError: If account already exists with same label.
+    """
+    # Check if account with this label already exists
+    existing = session.execute(
+        select(PlatformAccountModel).where(
+            PlatformAccountModel.platform == "tiktok",
+            PlatformAccountModel.label == label,
+        )
+    ).scalar_one_or_none()
+
+    if existing:
+        raise AccountError(
+            f"TikTok account with label '{label}' already exists. "
+            "Use a different label or disconnect the existing account first."
+        )
+
+    # Run OAuth flow
+    credentials = run_tiktok_oauth_flow()
+
+    # Check for Direct Post capability
+    has_direct_post = check_direct_post_capability(
+        credentials.access_token,
+        credentials.open_id or "",
+    )
+
+    # Create account record
+    account = PlatformAccountModel(
+        id=uuid4(),
+        platform="tiktok",
+        label=label,
+        external_id=credentials.open_id,
+        external_name=credentials.display_name,
+        encrypted_refresh_token=encrypt_token(credentials.refresh_token),
+        encrypted_access_token=encrypt_token(credentials.access_token),
+        token_expires_at=datetime.now(timezone.utc) + timedelta(seconds=credentials.expires_in),
+        scopes=credentials.scope,
+        status="active",
+        uploads_today=0,
+        capabilities={"direct_post": has_direct_post},
+        metadata_={
+            "connected_at": datetime.now(timezone.utc).isoformat(),
+            "open_id": credentials.open_id,
+            "refresh_token": encrypt_token(credentials.refresh_token),  # Store for analytics adapters
+            "refresh_expires_in": credentials.refresh_expires_in,
+        },
+    )
+
+    session.add(account)
+    session.commit()
+    session.refresh(account)
+
+    direct_post_status = "enabled" if has_direct_post else "not available (manual publish required)"
+    logger.info(
+        f"Connected TikTok account: {credentials.display_name} "
+        f"(open_id: {credentials.open_id}) as '{label}' [Direct Post: {direct_post_status}]"
+    )
+
+    return account
+
+
+def get_instagram_account_state(
+    session: Session,
+    account_id: UUID,
+) -> InstagramAccountState:
+    """Get account state for Instagram publishing.
+
+    Args:
+        session: Database session.
+        account_id: Account UUID.
+
+    Returns:
+        InstagramAccountState ready for publishing.
+
+    Raises:
+        AccountNotFoundError: If account not found.
+        AccountError: If account is not active or tokens invalid.
+    """
+    account = get_account_by_id(session, account_id)
+
+    if account.platform != "instagram":
+        raise AccountError(f"Account '{account.label}' is not an Instagram account")
+
+    if account.status != "active":
+        raise AccountError(
+            f"Account '{account.label}' is not active (status: {account.status}). "
+            "Please reconnect the account."
+        )
+
+    if not account.encrypted_access_token:
+        raise AccountError(
+            f"Account '{account.label}' has no access token. "
+            "Please reconnect the account."
+        )
+
+    try:
+        access_token = decrypt_token(account.encrypted_access_token)
+    except EncryptionError as e:
+        raise AccountError(f"Failed to decrypt tokens: {e}")
+
+    return InstagramAccountState(
+        account_id=account.id,
+        access_token=access_token,
+        instagram_account_id=account.external_id,
+        token_expires_at=account.token_expires_at,
+        posts_today=account.uploads_today or 0,
+        posts_reset_at=account.uploads_reset_at,
+        max_posts_per_day=settings.instagram_max_posts_per_day,
+    )
+
+
+def get_tiktok_account_state(
+    session: Session,
+    account_id: UUID,
+) -> TikTokAccountState:
+    """Get account state for TikTok publishing.
+
+    Args:
+        session: Database session.
+        account_id: Account UUID.
+
+    Returns:
+        TikTokAccountState ready for publishing.
+
+    Raises:
+        AccountNotFoundError: If account not found.
+        AccountError: If account is not active or tokens invalid.
+    """
+    account = get_account_by_id(session, account_id)
+
+    if account.platform != "tiktok":
+        raise AccountError(f"Account '{account.label}' is not a TikTok account")
+
+    if account.status != "active":
+        raise AccountError(
+            f"Account '{account.label}' is not active (status: {account.status}). "
+            "Please reconnect the account."
+        )
+
+    if not account.encrypted_refresh_token:
+        raise AccountError(
+            f"Account '{account.label}' has no refresh token. "
+            "Please reconnect the account."
+        )
+
+    try:
+        refresh_token = decrypt_token(account.encrypted_refresh_token)
+        access_token = (
+            decrypt_token(account.encrypted_access_token)
+            if account.encrypted_access_token
+            else ""
+        )
+    except EncryptionError as e:
+        raise AccountError(f"Failed to decrypt tokens: {e}")
+
+    metadata = account.metadata_ or {}
+    capabilities = account.capabilities or {}
+
+    return TikTokAccountState(
+        account_id=account.id,
+        access_token=access_token,
+        refresh_token=refresh_token,
+        open_id=metadata.get("open_id", account.external_id or ""),
+        token_expires_at=account.token_expires_at,
+        posts_today=account.uploads_today or 0,
+        posts_reset_at=account.uploads_reset_at,
+        max_posts_per_day=settings.tiktok_max_posts_per_day,
+        has_direct_post=capabilities.get("direct_post", False),
+    )

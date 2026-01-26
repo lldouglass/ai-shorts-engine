@@ -38,8 +38,7 @@ MAX_TITLE_LENGTH = 100
 MAX_DESCRIPTION_LENGTH = 5000
 MAX_TAGS_TOTAL_LENGTH = 500
 
-# Rate limiting
-DEFAULT_MAX_UPLOADS_PER_DAY = 50  # Conservative limit
+# Rate limiting constant moved to domain.account_state
 
 
 @dataclass
@@ -55,17 +54,8 @@ class YouTubeUploadResult:
     api_response: dict[str, Any] | None = None
 
 
-@dataclass
-class YouTubeAccountState:
-    """State for a YouTube account."""
-
-    account_id: UUID
-    access_token: str
-    refresh_token: str
-    token_expires_at: datetime | None = None
-    uploads_today: int = 0
-    uploads_reset_at: datetime | None = None
-    max_uploads_per_day: int = DEFAULT_MAX_UPLOADS_PER_DAY
+# Import account state from domain to avoid circular imports
+from shorts_engine.domain.account_state import YouTubeAccountState
 
 
 class YouTubePublisher(PublisherAdapter):

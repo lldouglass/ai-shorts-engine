@@ -136,3 +136,14 @@ class BatchStatus(StrEnum):
     RUNNING = "running"
     COMPLETED = "completed"
     FAILED = "failed"
+
+
+class PublishStatus(StrEnum):
+    """Status of a publish job."""
+
+    PENDING = "pending"
+    PUBLISHING = "publishing"
+    PUBLISHED = "published"
+    FAILED = "failed"
+    NEEDS_MANUAL_PUBLISH = "needs_manual_publish"  # Direct post not available, video stored locally
+    AWAITING_APPROVAL = "awaiting_approval"  # Content under platform review

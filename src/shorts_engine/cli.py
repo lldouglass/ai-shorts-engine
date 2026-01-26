@@ -743,9 +743,9 @@ def presets() -> None:
 
 @accounts_app.command("connect")
 def accounts_connect(
-    platform: str = typer.Argument(..., help="Platform to connect (youtube)"),
+    platform: str = typer.Argument(..., help="Platform to connect (youtube, instagram, tiktok)"),
     label: str = typer.Option(..., "--label", "-l", help="User-friendly label for this account"),
-    device_flow: bool = typer.Option(True, "--device-flow/--browser", help="Use device flow (recommended) or browser redirect"),
+    device_flow: bool = typer.Option(True, "--device-flow/--browser", help="Use device flow (recommended) or browser redirect (YouTube only)"),
 ) -> None:
     """Connect a platform account using OAuth.
 
@@ -753,18 +753,25 @@ def accounts_connect(
 
     Example:
         shorts-engine accounts connect youtube --label "Main Channel"
+        shorts-engine accounts connect instagram --label "Client IG"
+        shorts-engine accounts connect tiktok --label "Client TikTok"
     """
     platform = platform.lower()
 
-    if platform != "youtube":
+    supported_platforms = ("youtube", "instagram", "tiktok")
+    if platform not in supported_platforms:
         console.print(f"[bold red]Unsupported platform: {platform}[/bold red]")
-        console.print("[dim]Currently supported: youtube[/dim]")
+        console.print(f"[dim]Currently supported: {', '.join(supported_platforms)}[/dim]")
         raise typer.Exit(code=1)
+
+    auth_method = "Browser OAuth"
+    if platform == "youtube":
+        auth_method = "Device Flow" if device_flow else "Browser Redirect"
 
     console.print(Panel.fit(
         f"[bold]Connecting {platform.title()} Account[/bold]\n\n"
         f"[cyan]Label:[/cyan] {label}\n"
-        f"[cyan]Auth Method:[/cyan] {'Device Flow' if device_flow else 'Browser Redirect'}\n\n"
+        f"[cyan]Auth Method:[/cyan] {auth_method}\n\n"
         "[dim]You will be prompted to authorize access to your account.[/dim]",
         title="OAuth Setup",
         border_style="blue",
@@ -772,23 +779,51 @@ def accounts_connect(
 
     try:
         from shorts_engine.db.session import get_session_context
-        from shorts_engine.services.accounts import connect_youtube_account, AccountError
+        from shorts_engine.services.accounts import (
+            connect_youtube_account,
+            connect_instagram_account,
+            connect_tiktok_account,
+            AccountError,
+        )
 
         with get_session_context() as session:
-            account = connect_youtube_account(
-                session=session,
-                label=label,
-                use_device_flow=device_flow,
-            )
+            if platform == "youtube":
+                account = connect_youtube_account(
+                    session=session,
+                    label=label,
+                    use_device_flow=device_flow,
+                )
+                account_type = "Channel"
+            elif platform == "instagram":
+                account = connect_instagram_account(
+                    session=session,
+                    label=label,
+                )
+                account_type = "Account"
+            elif platform == "tiktok":
+                account = connect_tiktok_account(
+                    session=session,
+                    label=label,
+                )
+                account_type = "Account"
+            else:
+                raise ValueError(f"Unknown platform: {platform}")
 
             console.print(f"\n[bold green]Account connected successfully![/bold green]")
             console.print(f"[cyan]Account ID:[/cyan] {account.id}")
             console.print(f"[cyan]Label:[/cyan] {account.label}")
-            console.print(f"[cyan]Channel:[/cyan] {account.external_name or 'Unknown'}")
-            console.print(f"[cyan]Channel ID:[/cyan] {account.external_id or 'Unknown'}")
+            console.print(f"[cyan]{account_type}:[/cyan] {account.external_name or 'Unknown'}")
+            console.print(f"[cyan]{account_type} ID:[/cyan] {account.external_id or 'Unknown'}")
+
+            # Show capabilities for TikTok
+            if platform == "tiktok" and account.capabilities:
+                if account.capabilities.get("direct_post"):
+                    console.print("[cyan]Direct Post:[/cyan] [green]Enabled[/green]")
+                else:
+                    console.print("[cyan]Direct Post:[/cyan] [yellow]Not available (manual publish required)[/yellow]")
 
             console.print(f"\n[dim]You can now publish videos with:[/dim]")
-            console.print(f"[dim]  shorts-engine shorts publish --job <uuid> --youtube-account {label}[/dim]")
+            console.print(f"[dim]  shorts-engine shorts publish --job <uuid> --dest {platform}:{label}[/dim]")
 
     except AccountError as e:
         console.print(f"[bold red]Account error: {e}[/bold red]")
@@ -923,10 +958,45 @@ def accounts_link(
 # =============================================================================
 
 
+def parse_destinations(dest_args: list[str]) -> list[dict]:
+    """Parse --dest arguments into destination dictionaries.
+
+    Args:
+        dest_args: List of "platform:label" strings.
+
+    Returns:
+        List of dicts with platform and label keys.
+
+    Raises:
+        typer.Exit: If any destination is invalid.
+    """
+    destinations = []
+    valid_platforms = ("youtube", "instagram", "tiktok")
+
+    for dest in dest_args:
+        if ":" not in dest:
+            console.print(f"[bold red]Invalid destination format: {dest}[/bold red]")
+            console.print("[dim]Use format: platform:label (e.g., youtube:MainChannel)[/dim]")
+            raise typer.Exit(code=1)
+
+        platform, label = dest.split(":", 1)
+        platform = platform.lower()
+
+        if platform not in valid_platforms:
+            console.print(f"[bold red]Unknown platform: {platform}[/bold red]")
+            console.print(f"[dim]Valid platforms: {', '.join(valid_platforms)}[/dim]")
+            raise typer.Exit(code=1)
+
+        destinations.append({"platform": platform, "label": label})
+
+    return destinations
+
+
 @shorts_app.command("publish")
 def shorts_publish(
     job_id: str = typer.Option(..., "--job", "-j", help="Video job ID (UUID) to publish"),
-    youtube_account: Optional[str] = typer.Option(None, "--youtube-account", "-y", help="YouTube account label"),
+    dest: Optional[list[str]] = typer.Option(None, "--dest", "-d", help="Destination as platform:label (can be used multiple times)"),
+    youtube_account: Optional[str] = typer.Option(None, "--youtube-account", "-y", help="YouTube account label (legacy, use --dest instead)"),
     publish_at: Optional[str] = typer.Option(None, "--publish-at", help="Schedule publish time (ISO 8601)"),
     visibility: str = typer.Option("public", "--visibility", "-v", help="Video visibility (public, private, unlisted)"),
     dry_run: bool = typer.Option(False, "--dry-run", help="Show what would be uploaded without actually uploading"),
@@ -935,11 +1005,26 @@ def shorts_publish(
     """Publish a rendered video to platforms.
 
     Requires a completed video job with a final MP4 render.
+    Supports multi-destination publishing with --dest platform:label syntax.
 
     Example:
+        # Single destination (legacy style)
         shorts-engine shorts publish --job <uuid> --youtube-account "Main Channel"
-        shorts-engine shorts publish --job <uuid> --youtube-account "Main" --publish-at "2024-12-25T10:00:00Z"
-        shorts-engine shorts publish --job <uuid> --youtube-account "Main" --dry-run
+
+        # Single destination (new style)
+        shorts-engine shorts publish --job <uuid> --dest youtube:MainChannel
+
+        # Multi-destination publishing
+        shorts-engine shorts publish --job <uuid> \\
+            --dest youtube:ChannelA \\
+            --dest instagram:Client1 \\
+            --dest tiktok:Client1
+
+        # Scheduled publish
+        shorts-engine shorts publish --job <uuid> --dest youtube:Main --publish-at "2024-12-25T10:00:00Z"
+
+        # Dry run
+        shorts-engine shorts publish --job <uuid> --dest youtube:Main --dry-run
     """
     from shorts_engine.db.models import AssetModel, VideoJobModel
     from shorts_engine.db.session import get_session_context
@@ -957,10 +1042,20 @@ def shorts_publish(
         console.print("[dim]Valid options: public, private, unlisted[/dim]")
         raise typer.Exit(code=1)
 
-    # Require at least one platform
-    if not youtube_account:
-        console.print("[bold red]No platform specified. Use --youtube-account to specify a destination.[/bold red]")
-        console.print("[dim]Example: shorts-engine shorts publish --job <uuid> --youtube-account 'Main Channel'[/dim]")
+    # Build destinations list from --dest args or legacy --youtube-account
+    destinations: list[dict] = []
+    if dest:
+        destinations = parse_destinations(dest)
+
+    # Legacy support: convert --youtube-account to destination
+    if youtube_account:
+        destinations.append({"platform": "youtube", "label": youtube_account})
+
+    # Require at least one destination
+    if not destinations:
+        console.print("[bold red]No destination specified.[/bold red]")
+        console.print("[dim]Use --dest platform:label or --youtube-account 'Label'[/dim]")
+        console.print("[dim]Example: shorts-engine shorts publish --job <uuid> --dest youtube:MainChannel[/dim]")
         raise typer.Exit(code=1)
 
     # Verify job exists and has a final video
@@ -984,11 +1079,14 @@ def shorts_publish(
 
         job_title = job.title or "Untitled"
 
+    # Build destinations display
+    dest_display = "\n".join(f"  - {d['platform'].title()}: {d['label']}" for d in destinations)
+
     console.print(Panel.fit(
         f"[bold]Publishing Video[/bold]\n\n"
         f"[cyan]Job:[/cyan] {job_title}\n"
         f"[cyan]Job ID:[/cyan] {job_id}\n"
-        f"[cyan]YouTube Account:[/cyan] {youtube_account or 'None'}\n"
+        f"[cyan]Destinations:[/cyan]\n{dest_display}\n"
         f"[cyan]Visibility:[/cyan] {visibility}\n"
         f"[cyan]Scheduled:[/cyan] {publish_at or 'Immediate'}\n"
         f"[cyan]Dry Run:[/cyan] {'Yes' if dry_run else 'No'}",
@@ -1001,7 +1099,7 @@ def shorts_publish(
 
         result = run_publish_pipeline_task.delay(
             video_job_id=str(job_uuid),
-            youtube_account=youtube_account,
+            destinations=destinations,
             scheduled_publish_at=publish_at,
             visibility=visibility,
             dry_run=dry_run,
@@ -1021,22 +1119,32 @@ def shorts_publish(
                 # Show platform results
                 platforms = task_result.get("platforms", {})
 
-                if "youtube" in platforms:
-                    yt = platforms["youtube"]
-                    if yt.get("success"):
-                        if yt.get("dry_run"):
-                            console.print("\n[bold cyan]YouTube (Dry Run):[/bold cyan]")
+                for platform_name, platform_result in platforms.items():
+                    if platform_result.get("success"):
+                        if platform_result.get("dry_run"):
+                            console.print(f"\n[bold cyan]{platform_name.title()} (Dry Run):[/bold cyan]")
                             console.print("[dim]Would have uploaded with the following settings:[/dim]")
-                            payload = yt.get("payload", {})
-                            console.print(f"  Title: {payload.get('metadata', {}).get('snippet', {}).get('title', 'N/A')}")
+                            payload = platform_result.get("payload", {})
+                            if platform_name == "youtube":
+                                console.print(f"  Title: {payload.get('metadata', {}).get('snippet', {}).get('title', 'N/A')}")
+                            else:
+                                console.print(f"  Payload: {str(payload)[:100]}...")
                         else:
-                            console.print(f"\n[bold cyan]YouTube:[/bold cyan]")
-                            console.print(f"  URL: {yt.get('url')}")
-                            console.print(f"  Video ID: {yt.get('platform_video_id')}")
-                            if yt.get("forced_private"):
-                                console.print("  [yellow]Note: Video was forced to private by YouTube API[/yellow]")
+                            console.print(f"\n[bold cyan]{platform_name.title()}:[/bold cyan]")
+                            if platform_result.get("url"):
+                                console.print(f"  URL: {platform_result.get('url')}")
+                            if platform_result.get("platform_video_id"):
+                                console.print(f"  Video ID: {platform_result.get('platform_video_id')}")
+                            if platform_result.get("forced_private"):
+                                console.print("  [yellow]Note: Video was forced to private by platform[/yellow]")
+                            if platform_result.get("status") == "needs_manual_publish":
+                                console.print("  [yellow]Status: Needs manual publish (Direct Post not available)[/yellow]")
+                                if platform_result.get("manual_publish_path"):
+                                    console.print(f"  Video file: {platform_result.get('manual_publish_path')}")
+                                if platform_result.get("share_url"):
+                                    console.print(f"  Share URL: {platform_result.get('share_url')}")
                     else:
-                        console.print(f"\n[bold red]YouTube failed:[/bold red] {yt.get('error')}")
+                        console.print(f"\n[bold red]{platform_name.title()} failed:[/bold red] {platform_result.get('error')}")
             else:
                 console.print(f"\n[bold red]Publish failed![/bold red]")
                 for platform, result_data in task_result.get("platforms", {}).items():

@@ -386,6 +386,7 @@ class PlatformAccountModel(Base):
     status: Mapped[str] = mapped_column(String(50), server_default="active", index=True)
     uploads_today: Mapped[int] = mapped_column(Integer, server_default="0")
     uploads_reset_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    capabilities: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)  # e.g., {direct_post: true}
     metadata_: Mapped[dict[str, Any] | None] = mapped_column("metadata_", JSONB, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
@@ -465,6 +466,8 @@ class PublishJobModel(Base):
     dry_run: Mapped[bool] = mapped_column(Boolean, server_default="false")
     dry_run_payload: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
     api_response: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
+    manual_publish_path: Mapped[str | None] = mapped_column(String(1024), nullable=True)  # For NEEDS_MANUAL_PUBLISH
+    share_url: Mapped[str | None] = mapped_column(String(2048), nullable=True)  # TikTok Share Intent fallback
     metadata_: Mapped[dict[str, Any] | None] = mapped_column("metadata_", JSONB, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()

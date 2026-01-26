@@ -96,6 +96,22 @@ class Settings(BaseSettings):
         description="YouTube OAuth redirect URI",
     )
 
+    # Instagram OAuth (via Facebook Login / Meta Graph API)
+    instagram_app_id: str | None = Field(default=None, description="Instagram/Facebook App ID")
+    instagram_app_secret: str | None = Field(default=None, description="Instagram/Facebook App Secret")
+    instagram_redirect_uri: str = Field(
+        default="http://localhost:8085/instagram/callback",
+        description="Instagram OAuth redirect URI",
+    )
+
+    # TikTok OAuth
+    tiktok_client_key: str | None = Field(default=None, description="TikTok Client Key")
+    tiktok_client_secret: str | None = Field(default=None, description="TikTok Client Secret")
+    tiktok_redirect_uri: str = Field(
+        default="http://localhost:8085/tiktok/callback",
+        description="TikTok OAuth redirect URI",
+    )
+
     # Encryption (for token storage)
     encryption_master_key: str | None = Field(
         default=None,
@@ -106,6 +122,14 @@ class Settings(BaseSettings):
     youtube_max_uploads_per_day: int = Field(
         default=50,
         description="Maximum YouTube uploads per account per day",
+    )
+    instagram_max_posts_per_day: int = Field(
+        default=25,
+        description="Maximum Instagram posts per account per day",
+    )
+    tiktok_max_posts_per_day: int = Field(
+        default=50,
+        description="Maximum TikTok posts per account per day",
     )
 
 

@@ -9,7 +9,11 @@ from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from shorts_engine.adapters.analytics.youtube import YouTubeAnalyticsAdapter
+from shorts_engine.adapters.analytics.instagram import InstagramAnalyticsAdapter
+from shorts_engine.adapters.analytics.tiktok import TikTokAnalyticsAdapter
 from shorts_engine.adapters.comments.youtube import YouTubeCommentsAdapter
+from shorts_engine.adapters.comments.instagram import InstagramCommentsAdapter
+from shorts_engine.adapters.comments.tiktok import TikTokCommentsAdapter
 from shorts_engine.db.models import (
     PublishJobModel,
     VideoMetricsModel,
@@ -138,6 +142,52 @@ def ingest_metrics_batch_task(
     return result
 
 
+def _get_analytics_adapter(platform: str, account_id: UUID):
+    """Get the appropriate analytics adapter for a platform.
+
+    Args:
+        platform: Platform name (youtube, instagram, tiktok).
+        account_id: Account UUID for authentication.
+
+    Returns:
+        Analytics adapter instance.
+
+    Raises:
+        ValueError: If platform is not supported.
+    """
+    if platform == "youtube":
+        return YouTubeAnalyticsAdapter(account_id=account_id)
+    elif platform == "instagram":
+        return InstagramAnalyticsAdapter(account_id=account_id)
+    elif platform == "tiktok":
+        return TikTokAnalyticsAdapter(account_id=account_id)
+    else:
+        raise ValueError(f"Unsupported platform for analytics: {platform}")
+
+
+def _get_comments_adapter(platform: str, account_id: UUID):
+    """Get the appropriate comments adapter for a platform.
+
+    Args:
+        platform: Platform name (youtube, instagram, tiktok).
+        account_id: Account UUID for authentication.
+
+    Returns:
+        Comments adapter instance.
+
+    Raises:
+        ValueError: If platform is not supported.
+    """
+    if platform == "youtube":
+        return YouTubeCommentsAdapter(account_id=account_id)
+    elif platform == "instagram":
+        return InstagramCommentsAdapter(account_id=account_id)
+    elif platform == "tiktok":
+        return TikTokCommentsAdapter(account_id=account_id)
+    else:
+        raise ValueError(f"Unsupported platform for comments: {platform}")
+
+
 def _ingest_single_video_metrics(session, pub_job: PublishJobModel) -> int:
     """Ingest metrics for a single video.
 
@@ -148,11 +198,12 @@ def _ingest_single_video_metrics(session, pub_job: PublishJobModel) -> int:
     Returns:
         Number of metric records created/updated.
     """
-    if pub_job.platform != "youtube":
+    supported_platforms = ("youtube", "instagram", "tiktok")
+    if pub_job.platform not in supported_platforms:
         logger.debug("ingest_metrics_skip_platform", platform=pub_job.platform)
         return 0
 
-    adapter = YouTubeAnalyticsAdapter(account_id=pub_job.account_id)
+    adapter = _get_analytics_adapter(pub_job.platform, pub_job.account_id)
     count = 0
 
     try:
@@ -318,11 +369,12 @@ def _ingest_single_video_comments(
     Returns:
         Count of new/updated comments.
     """
-    if pub_job.platform != "youtube":
+    supported_platforms = ("youtube", "instagram", "tiktok")
+    if pub_job.platform not in supported_platforms:
         logger.debug("ingest_comments_skip_platform", platform=pub_job.platform)
         return 0
 
-    adapter = YouTubeCommentsAdapter(account_id=pub_job.account_id)
+    adapter = _get_comments_adapter(pub_job.platform, pub_job.account_id)
     new_count = 0
 
     try:

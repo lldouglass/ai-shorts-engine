@@ -312,11 +312,19 @@ async def trigger_render_video(request: RenderVideoRequest) -> JobResponse:
     )
 
 
+class DestinationItem(BaseModel):
+    """A single publish destination."""
+
+    platform: str = Field(..., pattern="^(youtube|instagram|tiktok)$")
+    label: str = Field(..., min_length=1, description="Account label")
+
+
 class PublishShortRequest(BaseModel):
     """Request to publish a short video to platforms."""
 
     video_job_id: str = Field(..., description="Video job UUID to publish")
-    youtube_account: str | None = Field(None, description="YouTube account label")
+    destinations: list[DestinationItem] | None = Field(None, description="List of platform:label destinations")
+    youtube_account: str | None = Field(None, description="YouTube account label (legacy, use destinations)")
     scheduled_publish_at: str | None = Field(None, description="ISO 8601 datetime for scheduled publishing")
     visibility: str = Field(default="public", pattern="^(public|private|unlisted)$")
     dry_run: bool = Field(default=False, description="Log what would happen without uploading")
@@ -345,23 +353,37 @@ class PublishStatusResponse(BaseModel):
     description="Enqueue the publish pipeline to upload a rendered video to platforms.",
 )
 async def trigger_publish_short(request: PublishShortRequest) -> JobResponse:
-    """Trigger the publish pipeline for a video job."""
-    if not request.youtube_account:
+    """Trigger the publish pipeline for a video job.
+
+    Supports multi-destination publishing via the destinations field.
+    The legacy youtube_account field is still supported for backward compatibility.
+    """
+    # Build destinations list
+    destinations: list[dict] = []
+
+    if request.destinations:
+        destinations = [{"platform": d.platform, "label": d.label} for d in request.destinations]
+
+    # Legacy support: convert youtube_account to destination
+    if request.youtube_account:
+        destinations.append({"platform": "youtube", "label": request.youtube_account})
+
+    if not destinations:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="At least one platform account must be specified (youtube_account)",
+            detail="At least one destination must be specified (destinations or youtube_account)",
         )
 
     logger.info(
         "publish_short_triggered",
         video_job_id=request.video_job_id,
-        youtube_account=request.youtube_account,
+        destinations=destinations,
         dry_run=request.dry_run,
     )
 
     task = run_publish_pipeline_task.delay(
         video_job_id=request.video_job_id,
-        youtube_account=request.youtube_account,
+        destinations=destinations,
         scheduled_publish_at=request.scheduled_publish_at,
         visibility=request.visibility,
         dry_run=request.dry_run,
