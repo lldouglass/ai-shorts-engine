@@ -41,6 +41,11 @@ celery_app.conf.update(
         "publish_video": {"queue": "high"},
         "ingest_analytics": {"queue": "low"},
         "ingest_comments": {"queue": "low"},
+        # Batch ingestion tasks
+        "ingest_metrics_batch": {"queue": "low"},
+        "ingest_comments_batch": {"queue": "low"},
+        "ingest_single_video_metrics": {"queue": "low"},
+        "ingest_single_video_comments": {"queue": "low"},
         # Video pipeline tasks
         "pipeline.plan_job": {"queue": "high"},
         "pipeline.generate_scene_clip": {"queue": "high"},
@@ -57,12 +62,20 @@ celery_app.conf.update(
     },
     # Beat scheduler (for periodic tasks)
     beat_schedule={
-        # Example: ingest analytics every hour
-        # "ingest-analytics-hourly": {
-        #     "task": "ingest_analytics",
-        #     "schedule": 3600.0,
-        #     "args": (),
-        # },
+        # Metrics ingestion - hourly
+        "ingest-metrics-hourly": {
+            "task": "ingest_metrics_batch",
+            "schedule": 3600.0,  # 1 hour
+            "args": (168,),  # since_hours: 7 days
+            "options": {"queue": "low"},
+        },
+        # Comments ingestion - every 6 hours
+        "ingest-comments-6h": {
+            "task": "ingest_comments_batch",
+            "schedule": 21600.0,  # 6 hours
+            "args": (168, 100),  # since_hours, max_per_video
+            "options": {"queue": "low"},
+        },
     },
 )
 

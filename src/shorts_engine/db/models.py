@@ -94,6 +94,9 @@ class VideoJobModel(Base):
     assets: Mapped[list["AssetModel"]] = relationship(
         "AssetModel", back_populates="video_job", cascade="all, delete-orphan"
     )
+    recipe_features: Mapped["VideoRecipeFeaturesModel | None"] = relationship(
+        "VideoRecipeFeaturesModel", back_populates="video_job", uselist=False, cascade="all, delete-orphan"
+    )
 
 
 class SceneModel(Base):
@@ -453,4 +456,149 @@ class PublishJobModel(Base):
     video_job: Mapped["VideoJobModel"] = relationship("VideoJobModel")
     account: Mapped["PlatformAccountModel"] = relationship(
         "PlatformAccountModel", back_populates="publish_jobs"
+    )
+    metrics: Mapped[list["VideoMetricsModel"]] = relationship(
+        "VideoMetricsModel", back_populates="publish_job", cascade="all, delete-orphan"
+    )
+    video_comments: Mapped[list["VideoCommentModel"]] = relationship(
+        "VideoCommentModel", back_populates="publish_job", cascade="all, delete-orphan"
+    )
+
+
+# =============================================================================
+# Analytics Ingestion Models
+# =============================================================================
+
+
+class VideoMetricsModel(Base):
+    """Video performance metrics by time window."""
+
+    __tablename__ = "video_metrics"
+
+    id: Mapped[PyUUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid4)
+    publish_job_id: Mapped[PyUUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("publish_jobs.id", ondelete="CASCADE"), index=True
+    )
+    window_type: Mapped[str] = mapped_column(String(20), nullable=False)  # 1h, 6h, 24h, 72h, 7d
+    window_start: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    window_end: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    # Core metrics
+    views: Mapped[int] = mapped_column(BigInteger, server_default="0")
+    likes: Mapped[int] = mapped_column(BigInteger, server_default="0")
+    dislikes: Mapped[int] = mapped_column(BigInteger, server_default="0")
+    comments_count: Mapped[int] = mapped_column(BigInteger, server_default="0")
+    shares: Mapped[int] = mapped_column(BigInteger, server_default="0")
+    watch_time_minutes: Mapped[int] = mapped_column(BigInteger, server_default="0")
+    avg_view_duration_seconds: Mapped[float | None] = mapped_column(Float, nullable=True)
+    avg_view_percentage: Mapped[float | None] = mapped_column(Float, nullable=True)
+    # Engagement
+    impressions: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    click_through_rate: Mapped[float | None] = mapped_column(Float, nullable=True)
+    engagement_rate: Mapped[float | None] = mapped_column(Float, nullable=True)
+    # Computed scores
+    reward_score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    # Raw data
+    raw_data: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
+    fetched_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+    # Constraints
+    __table_args__ = (
+        UniqueConstraint("publish_job_id", "window_type", "window_start", name="uq_video_metrics_window"),
+    )
+
+    # Relationships
+    publish_job: Mapped["PublishJobModel"] = relationship(
+        "PublishJobModel", back_populates="metrics"
+    )
+
+
+class VideoCommentModel(Base):
+    """Video comments from platforms."""
+
+    __tablename__ = "video_comments"
+
+    id: Mapped[PyUUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid4)
+    publish_job_id: Mapped[PyUUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("publish_jobs.id", ondelete="CASCADE"), index=True
+    )
+    platform_comment_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    author_channel_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    author_display_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    text: Mapped[str] = mapped_column(Text, nullable=False)
+    like_count: Mapped[int] = mapped_column(Integer, server_default="0")
+    reply_count: Mapped[int] = mapped_column(Integer, server_default="0")
+    published_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # Sentiment analysis (computed later)
+    sentiment: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    sentiment_score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    raw_data: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
+    fetched_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+    # Constraints
+    __table_args__ = (
+        UniqueConstraint("publish_job_id", "platform_comment_id", name="uq_video_comment_unique"),
+    )
+
+    # Relationships
+    publish_job: Mapped["PublishJobModel"] = relationship(
+        "PublishJobModel", back_populates="video_comments"
+    )
+
+
+class VideoRecipeFeaturesModel(Base):
+    """Video production features for ML correlation."""
+
+    __tablename__ = "video_recipe_features"
+
+    id: Mapped[PyUUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid4)
+    video_job_id: Mapped[PyUUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("video_jobs.id", ondelete="CASCADE"), index=True
+    )
+    # Hook analysis
+    hook_type: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    hook_duration_seconds: Mapped[float | None] = mapped_column(Float, nullable=True)
+    # Structure
+    scene_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    total_duration_seconds: Mapped[float | None] = mapped_column(Float, nullable=True)
+    avg_scene_duration_seconds: Mapped[float | None] = mapped_column(Float, nullable=True)
+    # Captions/text
+    caption_density: Mapped[float | None] = mapped_column(Float, nullable=True)
+    total_word_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # Narration
+    has_voiceover: Mapped[bool] = mapped_column(Boolean, server_default="false")
+    narration_wpm: Mapped[float | None] = mapped_column(Float, nullable=True)
+    voice_id: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    # Music
+    has_background_music: Mapped[bool] = mapped_column(Boolean, server_default="false")
+    music_genre: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    # Style
+    style_preset: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    aspect_ratio: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    # Raw feature vector for ML
+    feature_vector: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    updated_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), onupdate=func.now()
+    )
+
+    # Constraints
+    __table_args__ = (
+        UniqueConstraint("video_job_id", name="uq_video_recipe_features_job"),
+    )
+
+    # Relationships
+    video_job: Mapped["VideoJobModel"] = relationship(
+        "VideoJobModel", back_populates="recipe_features"
     )

@@ -24,9 +24,11 @@ app = typer.Typer(
 shorts_app = typer.Typer(help="Video shorts creation commands")
 projects_app = typer.Typer(help="Project management commands")
 accounts_app = typer.Typer(help="Platform account management commands")
+ingest_app = typer.Typer(help="Analytics and comments ingestion commands")
 app.add_typer(shorts_app, name="shorts")
 app.add_typer(projects_app, name="projects")
 app.add_typer(accounts_app, name="accounts")
+app.add_typer(ingest_app, name="ingest")
 
 console = Console()
 
@@ -1041,6 +1043,160 @@ def shorts_publish(
                 raise typer.Exit(code=1)
         else:
             console.print(f"\n[dim]Use 'shorts-engine shorts status {result.id}' to check progress[/dim]")
+
+    except Exception as e:
+        console.print(f"[bold red]Error: {e}[/bold red]")
+        raise typer.Exit(code=1)
+
+
+# =============================================================================
+# INGEST COMMANDS
+# =============================================================================
+
+
+def _parse_duration(duration: str) -> int:
+    """Parse a duration string to hours.
+
+    Supports formats like: 24h, 7d, 1w, 168
+
+    Args:
+        duration: Duration string (e.g., "24h", "7d", "1w").
+
+    Returns:
+        Number of hours.
+    """
+    duration = duration.lower().strip()
+
+    if duration.endswith("h"):
+        return int(duration[:-1])
+    elif duration.endswith("d"):
+        return int(duration[:-1]) * 24
+    elif duration.endswith("w"):
+        return int(duration[:-1]) * 24 * 7
+    else:
+        # Assume hours if no suffix
+        return int(duration)
+
+
+@ingest_app.command("metrics")
+def ingest_metrics(
+    since: str = typer.Option("24h", "--since", "-s", help="Time window (e.g., 24h, 7d, 1w)"),
+    wait: bool = typer.Option(False, "--wait", "-w", help="Wait for completion"),
+) -> None:
+    """Ingest performance metrics for published videos.
+
+    Fetches metrics from YouTube Analytics API for all videos published
+    within the specified time window. Metrics are stored with time-windowed
+    snapshots (1h, 6h, 24h, 72h, 7d) and reward scores are computed.
+
+    Example:
+        shorts-engine ingest metrics --since 7d
+        shorts-engine ingest metrics --since 24h --wait
+    """
+    try:
+        since_hours = _parse_duration(since)
+    except ValueError:
+        console.print(f"[bold red]Invalid duration format: {since}[/bold red]")
+        console.print("[dim]Use formats like: 24h, 7d, 1w[/dim]")
+        raise typer.Exit(code=1)
+
+    console.print(f"[bold blue]Ingesting metrics for videos published in the last {since}...[/bold blue]")
+
+    try:
+        from shorts_engine.jobs.ingestion_tasks import ingest_metrics_batch_task
+
+        result = ingest_metrics_batch_task.delay(since_hours=since_hours)
+        console.print(f"[dim]Task ID: {result.id}[/dim]")
+
+        if wait:
+            console.print("[dim]Waiting for completion...[/dim]")
+            with console.status("[bold blue]Ingesting metrics...", spinner="dots"):
+                task_result = result.get(timeout=3600)
+
+            if task_result.get("success"):
+                console.print(f"[bold green]Ingestion complete![/bold green]")
+
+                table = Table(title="Metrics Ingestion Result")
+                table.add_column("Metric", style="cyan")
+                table.add_column("Value")
+
+                table.add_row("Videos Processed", str(task_result.get("processed", 0)))
+                table.add_row("Metrics Created/Updated", str(task_result.get("metrics_created", 0)))
+                table.add_row("Errors", str(task_result.get("errors", 0)))
+
+                console.print(table)
+            else:
+                console.print(f"[bold red]Ingestion failed[/bold red]")
+                console.print(f"[red]{task_result.get('error', 'Unknown error')}[/red]")
+                raise typer.Exit(code=1)
+        else:
+            console.print(f"[green]Task enqueued successfully![/green]")
+            console.print(f"[dim]Use 'shorts-engine status {result.id}' to check progress[/dim]")
+
+    except Exception as e:
+        console.print(f"[bold red]Error: {e}[/bold red]")
+        raise typer.Exit(code=1)
+
+
+@ingest_app.command("comments")
+def ingest_comments(
+    since: str = typer.Option("24h", "--since", "-s", help="Time window (e.g., 24h, 7d, 1w)"),
+    max_per_video: int = typer.Option(100, "--max", "-m", help="Max comments per video"),
+    wait: bool = typer.Option(False, "--wait", "-w", help="Wait for completion"),
+) -> None:
+    """Ingest comments for published videos.
+
+    Fetches top-level comments from YouTube Data API for all videos published
+    within the specified time window. Comments are stored for sentiment analysis
+    and learning.
+
+    Example:
+        shorts-engine ingest comments --since 7d
+        shorts-engine ingest comments --since 24h --max 50 --wait
+    """
+    try:
+        since_hours = _parse_duration(since)
+    except ValueError:
+        console.print(f"[bold red]Invalid duration format: {since}[/bold red]")
+        console.print("[dim]Use formats like: 24h, 7d, 1w[/dim]")
+        raise typer.Exit(code=1)
+
+    console.print(f"[bold blue]Ingesting comments for videos published in the last {since}...[/bold blue]")
+    console.print(f"[dim]Max {max_per_video} comments per video[/dim]")
+
+    try:
+        from shorts_engine.jobs.ingestion_tasks import ingest_comments_batch_task
+
+        result = ingest_comments_batch_task.delay(
+            since_hours=since_hours,
+            max_per_video=max_per_video,
+        )
+        console.print(f"[dim]Task ID: {result.id}[/dim]")
+
+        if wait:
+            console.print("[dim]Waiting for completion...[/dim]")
+            with console.status("[bold blue]Ingesting comments...", spinner="dots"):
+                task_result = result.get(timeout=3600)
+
+            if task_result.get("success"):
+                console.print(f"[bold green]Ingestion complete![/bold green]")
+
+                table = Table(title="Comments Ingestion Result")
+                table.add_column("Metric", style="cyan")
+                table.add_column("Value")
+
+                table.add_row("Videos Processed", str(task_result.get("processed", 0)))
+                table.add_row("Total Comments", str(task_result.get("total_comments", 0)))
+                table.add_row("Errors", str(task_result.get("errors", 0)))
+
+                console.print(table)
+            else:
+                console.print(f"[bold red]Ingestion failed[/bold red]")
+                console.print(f"[red]{task_result.get('error', 'Unknown error')}[/red]")
+                raise typer.Exit(code=1)
+        else:
+            console.print(f"[green]Task enqueued successfully![/green]")
+            console.print(f"[dim]Use 'shorts-engine status {result.id}' to check progress[/dim]")
 
     except Exception as e:
         console.print(f"[bold red]Error: {e}[/bold red]")
