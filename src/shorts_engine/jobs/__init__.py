@@ -22,6 +22,11 @@ from shorts_engine.jobs.render_pipeline import (
     render_final_video_task,
     run_render_pipeline_task,
 )
+from shorts_engine.jobs.publish_pipeline import (
+    check_publish_status_task,
+    publish_to_youtube_task,
+    run_publish_pipeline_task,
+)
 
 __all__ = [
     # Core tasks
@@ -43,4 +48,8 @@ __all__ = [
     "render_final_video_task",
     "mark_ready_to_publish_task",
     "run_render_pipeline_task",
+    # Publish pipeline tasks
+    "publish_to_youtube_task",
+    "run_publish_pipeline_task",
+    "check_publish_status_task",
 ]

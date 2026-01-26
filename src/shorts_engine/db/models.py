@@ -338,3 +338,119 @@ class JobModel(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
+
+
+# =============================================================================
+# Platform Accounts Models (multi-account publishing)
+# =============================================================================
+
+
+class PlatformAccountModel(Base):
+    """Platform account (connected YouTube, TikTok, etc.) ORM model."""
+
+    __tablename__ = "platform_accounts"
+
+    id: Mapped[PyUUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid4)
+    platform: Mapped[str] = mapped_column(String(50), nullable=False, index=True)
+    label: Mapped[str] = mapped_column(String(100), nullable=False, index=True)
+    external_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    external_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    encrypted_refresh_token: Mapped[str | None] = mapped_column(Text, nullable=True)
+    encrypted_access_token: Mapped[str | None] = mapped_column(Text, nullable=True)
+    token_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    scopes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    status: Mapped[str] = mapped_column(String(50), server_default="active", index=True)
+    uploads_today: Mapped[int] = mapped_column(Integer, server_default="0")
+    uploads_reset_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    metadata_: Mapped[dict[str, Any] | None] = mapped_column("metadata_", JSONB, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    updated_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), onupdate=func.now()
+    )
+
+    # Constraints
+    __table_args__ = (
+        UniqueConstraint("platform", "label", name="uq_platform_label"),
+    )
+
+    # Relationships
+    account_projects: Mapped[list["AccountProjectModel"]] = relationship(
+        "AccountProjectModel", back_populates="account", cascade="all, delete-orphan"
+    )
+    publish_jobs: Mapped[list["PublishJobModel"]] = relationship(
+        "PublishJobModel", back_populates="account", cascade="all, delete-orphan"
+    )
+
+
+class AccountProjectModel(Base):
+    """Account-project mapping ORM model."""
+
+    __tablename__ = "account_projects"
+
+    id: Mapped[PyUUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid4)
+    account_id: Mapped[PyUUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("platform_accounts.id", ondelete="CASCADE"), index=True
+    )
+    project_id: Mapped[PyUUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("projects.id", ondelete="CASCADE"), index=True
+    )
+    is_default: Mapped[bool] = mapped_column(Boolean, server_default="false")
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+    # Constraints
+    __table_args__ = (
+        UniqueConstraint("account_id", "project_id", name="uq_account_project"),
+    )
+
+    # Relationships
+    account: Mapped["PlatformAccountModel"] = relationship(
+        "PlatformAccountModel", back_populates="account_projects"
+    )
+    project: Mapped["ProjectModel"] = relationship("ProjectModel")
+
+
+class PublishJobModel(Base):
+    """Publish job (track individual publish operations) ORM model."""
+
+    __tablename__ = "publish_jobs"
+
+    id: Mapped[PyUUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid4)
+    video_job_id: Mapped[PyUUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("video_jobs.id", ondelete="CASCADE"), index=True
+    )
+    account_id: Mapped[PyUUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("platform_accounts.id", ondelete="CASCADE"), index=True
+    )
+    platform: Mapped[str] = mapped_column(String(50), nullable=False, index=True)
+    status: Mapped[str] = mapped_column(String(50), server_default="pending", index=True)
+    platform_video_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    platform_url: Mapped[str | None] = mapped_column(String(2048), nullable=True)
+    scheduled_publish_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    actual_publish_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    visibility: Mapped[str] = mapped_column(String(50), server_default="public")
+    forced_private: Mapped[bool] = mapped_column(Boolean, server_default="false")
+    title: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    tags: Mapped[list[str] | None] = mapped_column(JSONB, nullable=True)
+    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    retry_count: Mapped[int] = mapped_column(Integer, server_default="0")
+    dry_run: Mapped[bool] = mapped_column(Boolean, server_default="false")
+    dry_run_payload: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
+    api_response: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
+    metadata_: Mapped[dict[str, Any] | None] = mapped_column("metadata_", JSONB, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    updated_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), onupdate=func.now()
+    )
+
+    # Relationships
+    video_job: Mapped["VideoJobModel"] = relationship("VideoJobModel")
+    account: Mapped["PlatformAccountModel"] = relationship(
+        "PlatformAccountModel", back_populates="publish_jobs"
+    )

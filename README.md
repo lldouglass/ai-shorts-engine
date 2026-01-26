@@ -20,7 +20,11 @@ A closed-loop AI Shorts engine that generates 60-second videos, uploads them to 
   - VIBRANT_MOTION_GRAPHICS: Bold, colorful motion graphics
   - CINEMATIC_REALISM: Photorealistic cinematic footage
   - SURREAL_DREAMSCAPE: Ethereal, dream-like visuals
-- **Multi-Platform Publishing**: Adapters for YouTube Shorts, TikTok, Instagram Reels
+- **Multi-Platform Publishing**: YouTube Shorts with multi-account support
+  - Connect multiple YouTube accounts via OAuth
+  - Schedule uploads with `publishAt`
+  - Dry-run mode for testing without uploading
+  - Rate limiting (configurable max uploads per day)
 - **Analytics Ingestion**: Track views, engagement, and performance metrics
 - **Comment Analysis**: Ingest and analyze audience feedback
 - **Closed-Loop Iteration**: Use performance data to improve future content
@@ -53,6 +57,17 @@ job_id -> [generate_voiceover] -> [render_final_video] -> [mark_ready_to_publish
 1. **generate_voiceover** (optional): Creates narration audio from caption beats using ElevenLabs or Edge TTS
 2. **render_final_video**: Uses Creatomate to compose clips, burn in captions, and mix audio
 3. **mark_ready_to_publish**: Updates job with final MP4 URL
+
+### Publish Pipeline
+
+The publish pipeline uploads rendered videos to platforms:
+
+```
+job_id -> [publish_to_youtube] -> [record_publish_result]
+```
+
+1. **publish_to_youtube**: Uploads video via YouTube Data API with metadata and scheduling
+2. **record_publish_result**: Stores platform video ID, URL, and any API-forced visibility changes
 
 All stages support:
 - Retries with exponential backoff
@@ -163,6 +178,62 @@ shorts-engine shorts render \
   --wait
 ```
 
+### Video Publishing
+
+```bash
+# Connect a YouTube account (interactive OAuth flow)
+shorts-engine accounts connect youtube --label "Main Channel"
+
+# List connected accounts
+shorts-engine accounts list
+
+# Publish a rendered video to YouTube
+shorts-engine shorts publish \
+  --job <job-uuid> \
+  --youtube-account "Main Channel" \
+  --wait
+
+# Schedule a video for later
+shorts-engine shorts publish \
+  --job <job-uuid> \
+  --youtube-account "Main Channel" \
+  --publish-at "2024-12-25T10:00:00Z"
+
+# Dry-run mode (shows what would be uploaded without actually uploading)
+shorts-engine shorts publish \
+  --job <job-uuid> \
+  --youtube-account "Main Channel" \
+  --dry-run
+
+# Publish as unlisted
+shorts-engine shorts publish \
+  --job <job-uuid> \
+  --youtube-account "Main Channel" \
+  --visibility unlisted
+```
+
+### Account Management
+
+```bash
+# Connect a YouTube account
+shorts-engine accounts connect youtube --label "My Channel"
+
+# Use browser-based OAuth instead of device flow
+shorts-engine accounts connect youtube --label "My Channel" --browser
+
+# List all connected accounts
+shorts-engine accounts list
+
+# List only YouTube accounts
+shorts-engine accounts list --platform youtube
+
+# Disconnect an account
+shorts-engine accounts disconnect "My Channel"
+
+# Link an account to a project (for publishing)
+shorts-engine accounts link --account "Main Channel" --project <project-uuid> --default
+```
+
 ### Other Commands
 
 ```bash
@@ -225,6 +296,12 @@ ai-shorts-engine/
 - **assets**: Generated clips, audio, final videos
 - **prompts**: Exact prompts used for each scene
 
+### Publishing Tables
+
+- **platform_accounts**: Connected YouTube/TikTok/Instagram accounts with encrypted tokens
+- **account_projects**: Mapping of which accounts can publish to which projects
+- **publish_jobs**: Individual publish operations with status, platform video ID, and URL
+
 ### Relationships
 
 ```
@@ -233,7 +310,12 @@ projects
         ├── scenes (1:N)
         │     ├── assets (1:N)
         │     └── prompts (1:N)
-        └── assets (1:N)  # job-level assets
+        ├── assets (1:N)  # job-level assets
+        └── publish_jobs (1:N)
+
+platform_accounts
+  ├── account_projects (1:N) -> projects
+  └── publish_jobs (1:N)
 ```
 
 ## Development
@@ -273,6 +355,11 @@ All configuration is done via environment variables. See `.env.example` for avai
 | `CREATOMATE_API_KEY` | Creatomate API key | - |
 | `CREATOMATE_WEBHOOK_URL` | Webhook for render completion | - |
 | `ELEVENLABS_API_KEY` | ElevenLabs API key | - |
+| `YOUTUBE_CLIENT_ID` | YouTube OAuth client ID | - |
+| `YOUTUBE_CLIENT_SECRET` | YouTube OAuth client secret | - |
+| `YOUTUBE_REDIRECT_URI` | OAuth redirect URI | `http://localhost:8085/callback` |
+| `YOUTUBE_MAX_UPLOADS_PER_DAY` | Max uploads per account per day | `50` |
+| `ENCRYPTION_MASTER_KEY` | Fernet key for token encryption | (auto-generated in dev) |
 
 ## Style Presets
 
@@ -314,6 +401,66 @@ Ethereal, dream-like visuals with impossible geometry and soft glow. Perfect for
 | `/api/v1/jobs/{id}` | GET | Get job status |
 | `/api/v1/jobs/shorts/create` | POST | Start video creation pipeline |
 | `/api/v1/jobs/shorts/render` | POST | Start render pipeline |
+| `/api/v1/jobs/shorts/publish` | POST | Publish video to platforms |
+| `/api/v1/jobs/publish/{id}` | GET | Get publish job status |
+| `/api/v1/accounts` | GET | List connected accounts |
+| `/api/v1/accounts/{id}` | GET | Get account details |
+| `/api/v1/accounts/link` | POST | Link account to project |
+
+## YouTube OAuth Setup
+
+### Prerequisites
+
+1. Go to [Google Cloud Console](https://console.cloud.google.com/)
+2. Create a new project or select an existing one
+3. Enable the YouTube Data API v3
+4. Go to "APIs & Services" > "Credentials"
+5. Create OAuth 2.0 credentials (Desktop app type)
+6. Download the credentials and note the Client ID and Client Secret
+
+### Configuration
+
+Add these to your `.env` file:
+
+```bash
+YOUTUBE_CLIENT_ID=your_client_id.apps.googleusercontent.com
+YOUTUBE_CLIENT_SECRET=your_client_secret
+
+# Optional: Generate a secure encryption key for production
+# python -c 'from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())'
+ENCRYPTION_MASTER_KEY=your_generated_fernet_key
+```
+
+### Connecting an Account
+
+```bash
+# This opens a browser/shows a code for authorization
+shorts-engine accounts connect youtube --label "My Channel"
+
+# Follow the prompts to authorize the app
+# The refresh token will be securely stored in the database
+```
+
+### Troubleshooting
+
+**"No refresh token received"**
+- This happens if the app was previously authorized. Go to [Google Account Permissions](https://myaccount.google.com/permissions), find "AI Shorts Engine", and revoke access. Then try connecting again.
+
+**"invalid_grant" error**
+- The refresh token has been revoked or expired. Disconnect and reconnect the account:
+  ```bash
+  shorts-engine accounts disconnect "My Channel"
+  shorts-engine accounts connect youtube --label "My Channel"
+  ```
+
+**"quotaExceeded" error**
+- You've hit YouTube's API quota limit. Wait 24 hours or request a quota increase in Google Cloud Console.
+
+**Video forced to private**
+- YouTube may force videos to private if your channel is new or unverified. Complete channel verification to unlock public uploads for longer videos.
+
+**Daily upload limit reached**
+- The engine enforces a configurable daily limit (default 50) to prevent API abuse. Adjust with `YOUTUBE_MAX_UPLOADS_PER_DAY` or wait until midnight UTC.
 
 ## License
 

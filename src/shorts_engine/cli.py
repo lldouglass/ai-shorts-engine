@@ -23,8 +23,10 @@ app = typer.Typer(
 # Subcommand groups
 shorts_app = typer.Typer(help="Video shorts creation commands")
 projects_app = typer.Typer(help="Project management commands")
+accounts_app = typer.Typer(help="Platform account management commands")
 app.add_typer(shorts_app, name="shorts")
 app.add_typer(projects_app, name="projects")
+app.add_typer(accounts_app, name="accounts")
 
 console = Console()
 
@@ -728,6 +730,321 @@ def presets() -> None:
             border_style="cyan",
         ))
         console.print()
+
+
+# =============================================================================
+# ACCOUNTS COMMANDS
+# =============================================================================
+
+
+@accounts_app.command("connect")
+def accounts_connect(
+    platform: str = typer.Argument(..., help="Platform to connect (youtube)"),
+    label: str = typer.Option(..., "--label", "-l", help="User-friendly label for this account"),
+    device_flow: bool = typer.Option(True, "--device-flow/--browser", help="Use device flow (recommended) or browser redirect"),
+) -> None:
+    """Connect a platform account using OAuth.
+
+    This will open a browser window or display a code for authorization.
+
+    Example:
+        shorts-engine accounts connect youtube --label "Main Channel"
+    """
+    platform = platform.lower()
+
+    if platform != "youtube":
+        console.print(f"[bold red]Unsupported platform: {platform}[/bold red]")
+        console.print("[dim]Currently supported: youtube[/dim]")
+        raise typer.Exit(code=1)
+
+    console.print(Panel.fit(
+        f"[bold]Connecting {platform.title()} Account[/bold]\n\n"
+        f"[cyan]Label:[/cyan] {label}\n"
+        f"[cyan]Auth Method:[/cyan] {'Device Flow' if device_flow else 'Browser Redirect'}\n\n"
+        "[dim]You will be prompted to authorize access to your account.[/dim]",
+        title="OAuth Setup",
+        border_style="blue",
+    ))
+
+    try:
+        from shorts_engine.db.session import get_session_context
+        from shorts_engine.services.accounts import connect_youtube_account, AccountError
+
+        with get_session_context() as session:
+            account = connect_youtube_account(
+                session=session,
+                label=label,
+                use_device_flow=device_flow,
+            )
+
+            console.print(f"\n[bold green]Account connected successfully![/bold green]")
+            console.print(f"[cyan]Account ID:[/cyan] {account.id}")
+            console.print(f"[cyan]Label:[/cyan] {account.label}")
+            console.print(f"[cyan]Channel:[/cyan] {account.external_name or 'Unknown'}")
+            console.print(f"[cyan]Channel ID:[/cyan] {account.external_id or 'Unknown'}")
+
+            console.print(f"\n[dim]You can now publish videos with:[/dim]")
+            console.print(f"[dim]  shorts-engine shorts publish --job <uuid> --youtube-account {label}[/dim]")
+
+    except AccountError as e:
+        console.print(f"[bold red]Account error: {e}[/bold red]")
+        raise typer.Exit(code=1)
+    except Exception as e:
+        console.print(f"[bold red]Error: {e}[/bold red]")
+        raise typer.Exit(code=1)
+
+
+@accounts_app.command("list")
+def accounts_list(
+    platform: Optional[str] = typer.Option(None, "--platform", "-p", help="Filter by platform"),
+) -> None:
+    """List connected platform accounts."""
+    from shorts_engine.db.session import get_session_context
+    from shorts_engine.services.accounts import list_accounts
+
+    with get_session_context() as session:
+        accounts = list_accounts(session, platform=platform)
+
+        if not accounts:
+            console.print("[dim]No accounts connected. Use 'shorts-engine accounts connect' to add one.[/dim]")
+            return
+
+        table = Table(title="Connected Accounts")
+        table.add_column("ID", style="dim", no_wrap=True)
+        table.add_column("Platform", style="cyan")
+        table.add_column("Label")
+        table.add_column("Channel/Account")
+        table.add_column("Status", style="green")
+        table.add_column("Uploads Today")
+        table.add_column("Connected")
+
+        for account in accounts:
+            status_style = "green" if account.status == "active" else "red"
+            table.add_row(
+                str(account.id)[:8] + "...",
+                account.platform,
+                account.label,
+                account.external_name or account.external_id or "-",
+                f"[{status_style}]{account.status}[/{status_style}]",
+                str(account.uploads_today or 0),
+                account.created_at.strftime("%Y-%m-%d") if account.created_at else "-",
+            )
+
+        console.print(table)
+
+
+@accounts_app.command("disconnect")
+def accounts_disconnect(
+    account_id: str = typer.Argument(..., help="Account ID or label to disconnect"),
+    force: bool = typer.Option(False, "--force", "-f", help="Skip confirmation"),
+) -> None:
+    """Disconnect a platform account."""
+    from shorts_engine.db.models import PlatformAccountModel
+    from shorts_engine.db.session import get_session_context
+    from shorts_engine.services.accounts import disconnect_account, get_account_by_id, AccountNotFoundError
+    from sqlalchemy import select
+
+    with get_session_context() as session:
+        # Try to find by ID first, then by label
+        account = None
+        try:
+            account_uuid = UUID(account_id)
+            account = session.get(PlatformAccountModel, account_uuid)
+        except ValueError:
+            # Try by label
+            account = session.execute(
+                select(PlatformAccountModel).where(PlatformAccountModel.label == account_id)
+            ).scalar_one_or_none()
+
+        if not account:
+            console.print(f"[bold red]Account not found: {account_id}[/bold red]")
+            raise typer.Exit(code=1)
+
+        if not force:
+            console.print(f"[yellow]About to disconnect:[/yellow]")
+            console.print(f"  Platform: {account.platform}")
+            console.print(f"  Label: {account.label}")
+            console.print(f"  Channel: {account.external_name or 'Unknown'}")
+
+            if not typer.confirm("Are you sure?"):
+                console.print("[dim]Cancelled[/dim]")
+                raise typer.Exit()
+
+        disconnect_account(session, account.id)
+        console.print(f"[green]Account disconnected: {account.label}[/green]")
+
+
+@accounts_app.command("link")
+def accounts_link(
+    account_label: str = typer.Option(..., "--account", "-a", help="Account label"),
+    project_id: str = typer.Option(..., "--project", "-p", help="Project ID"),
+    default: bool = typer.Option(False, "--default", "-d", help="Set as default account for this project"),
+) -> None:
+    """Link an account to a project for publishing."""
+    from shorts_engine.db.session import get_session_context
+    from shorts_engine.services.accounts import (
+        get_account_by_label,
+        link_account_to_project,
+        AccountError,
+        AccountNotFoundError,
+    )
+
+    try:
+        project_uuid = UUID(project_id)
+    except ValueError:
+        console.print(f"[bold red]Invalid project ID: {project_id}[/bold red]")
+        raise typer.Exit(code=1)
+
+    with get_session_context() as session:
+        try:
+            account = get_account_by_label(session, "youtube", account_label)
+            link = link_account_to_project(
+                session,
+                account.id,
+                project_uuid,
+                is_default=default,
+            )
+
+            console.print(f"[green]Linked account '{account_label}' to project[/green]")
+            if default:
+                console.print("[dim]Set as default account for this project[/dim]")
+
+        except (AccountNotFoundError, AccountError) as e:
+            console.print(f"[bold red]Error: {e}[/bold red]")
+            raise typer.Exit(code=1)
+
+
+# =============================================================================
+# SHORTS PUBLISH COMMAND
+# =============================================================================
+
+
+@shorts_app.command("publish")
+def shorts_publish(
+    job_id: str = typer.Option(..., "--job", "-j", help="Video job ID (UUID) to publish"),
+    youtube_account: Optional[str] = typer.Option(None, "--youtube-account", "-y", help="YouTube account label"),
+    publish_at: Optional[str] = typer.Option(None, "--publish-at", help="Schedule publish time (ISO 8601)"),
+    visibility: str = typer.Option("public", "--visibility", "-v", help="Video visibility (public, private, unlisted)"),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Show what would be uploaded without actually uploading"),
+    wait: bool = typer.Option(False, "--wait", "-w", help="Wait for publish to complete"),
+) -> None:
+    """Publish a rendered video to platforms.
+
+    Requires a completed video job with a final MP4 render.
+
+    Example:
+        shorts-engine shorts publish --job <uuid> --youtube-account "Main Channel"
+        shorts-engine shorts publish --job <uuid> --youtube-account "Main" --publish-at "2024-12-25T10:00:00Z"
+        shorts-engine shorts publish --job <uuid> --youtube-account "Main" --dry-run
+    """
+    from shorts_engine.db.models import AssetModel, VideoJobModel
+    from shorts_engine.db.session import get_session_context
+
+    # Validate job ID
+    try:
+        job_uuid = UUID(job_id)
+    except ValueError:
+        console.print(f"[bold red]Invalid job ID: {job_id}[/bold red]")
+        raise typer.Exit(code=1)
+
+    # Validate visibility
+    if visibility not in ("public", "private", "unlisted"):
+        console.print(f"[bold red]Invalid visibility: {visibility}[/bold red]")
+        console.print("[dim]Valid options: public, private, unlisted[/dim]")
+        raise typer.Exit(code=1)
+
+    # Require at least one platform
+    if not youtube_account:
+        console.print("[bold red]No platform specified. Use --youtube-account to specify a destination.[/bold red]")
+        console.print("[dim]Example: shorts-engine shorts publish --job <uuid> --youtube-account 'Main Channel'[/dim]")
+        raise typer.Exit(code=1)
+
+    # Verify job exists and has a final video
+    with get_session_context() as session:
+        job = session.get(VideoJobModel, job_uuid)
+        if not job:
+            console.print(f"[bold red]Video job not found: {job_id}[/bold red]")
+            raise typer.Exit(code=1)
+
+        # Check for final video
+        final_asset = None
+        for asset in job.assets:
+            if asset.asset_type == "final_video" and asset.status == "ready":
+                final_asset = asset
+                break
+
+        if not final_asset:
+            console.print(f"[bold red]No final video found for job.[/bold red]")
+            console.print("[dim]Run 'shorts-engine shorts render --job <uuid>' first.[/dim]")
+            raise typer.Exit(code=1)
+
+        job_title = job.title or "Untitled"
+
+    console.print(Panel.fit(
+        f"[bold]Publishing Video[/bold]\n\n"
+        f"[cyan]Job:[/cyan] {job_title}\n"
+        f"[cyan]Job ID:[/cyan] {job_id}\n"
+        f"[cyan]YouTube Account:[/cyan] {youtube_account or 'None'}\n"
+        f"[cyan]Visibility:[/cyan] {visibility}\n"
+        f"[cyan]Scheduled:[/cyan] {publish_at or 'Immediate'}\n"
+        f"[cyan]Dry Run:[/cyan] {'Yes' if dry_run else 'No'}",
+        title="Publish Pipeline",
+        border_style="magenta",
+    ))
+
+    try:
+        from shorts_engine.jobs.publish_pipeline import run_publish_pipeline_task
+
+        result = run_publish_pipeline_task.delay(
+            video_job_id=str(job_uuid),
+            youtube_account=youtube_account,
+            scheduled_publish_at=publish_at,
+            visibility=visibility,
+            dry_run=dry_run,
+        )
+
+        console.print(f"\n[green]Publish pipeline enqueued![/green]")
+        console.print(f"[dim]Task ID: {result.id}[/dim]")
+
+        if wait:
+            console.print("\n[dim]Waiting for publish to complete...[/dim]")
+            with console.status("[bold magenta]Publishing...", spinner="dots"):
+                task_result = result.get(timeout=600)  # 10 min max
+
+            if task_result.get("success"):
+                console.print("\n[bold green]Published successfully![/bold green]")
+
+                # Show platform results
+                platforms = task_result.get("platforms", {})
+
+                if "youtube" in platforms:
+                    yt = platforms["youtube"]
+                    if yt.get("success"):
+                        if yt.get("dry_run"):
+                            console.print("\n[bold cyan]YouTube (Dry Run):[/bold cyan]")
+                            console.print("[dim]Would have uploaded with the following settings:[/dim]")
+                            payload = yt.get("payload", {})
+                            console.print(f"  Title: {payload.get('metadata', {}).get('snippet', {}).get('title', 'N/A')}")
+                        else:
+                            console.print(f"\n[bold cyan]YouTube:[/bold cyan]")
+                            console.print(f"  URL: {yt.get('url')}")
+                            console.print(f"  Video ID: {yt.get('platform_video_id')}")
+                            if yt.get("forced_private"):
+                                console.print("  [yellow]Note: Video was forced to private by YouTube API[/yellow]")
+                    else:
+                        console.print(f"\n[bold red]YouTube failed:[/bold red] {yt.get('error')}")
+            else:
+                console.print(f"\n[bold red]Publish failed![/bold red]")
+                for platform, result_data in task_result.get("platforms", {}).items():
+                    if not result_data.get("success"):
+                        console.print(f"  {platform}: {result_data.get('error')}")
+                raise typer.Exit(code=1)
+        else:
+            console.print(f"\n[dim]Use 'shorts-engine shorts status {result.id}' to check progress[/dim]")
+
+    except Exception as e:
+        console.print(f"[bold red]Error: {e}[/bold red]")
+        raise typer.Exit(code=1)
 
 
 if __name__ == "__main__":

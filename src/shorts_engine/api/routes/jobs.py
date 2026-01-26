@@ -16,6 +16,7 @@ from shorts_engine.jobs.tasks import (
 )
 from shorts_engine.jobs.render_pipeline import run_render_pipeline_task
 from shorts_engine.jobs.video_pipeline import run_full_pipeline_task
+from shorts_engine.jobs.publish_pipeline import run_publish_pipeline_task
 from shorts_engine.logging import get_logger
 from shorts_engine.worker import celery_app
 
@@ -309,3 +310,111 @@ async def trigger_render_video(request: RenderVideoRequest) -> JobResponse:
         status="queued",
         message="Render pipeline enqueued successfully",
     )
+
+
+class PublishShortRequest(BaseModel):
+    """Request to publish a short video to platforms."""
+
+    video_job_id: str = Field(..., description="Video job UUID to publish")
+    youtube_account: str | None = Field(None, description="YouTube account label")
+    scheduled_publish_at: str | None = Field(None, description="ISO 8601 datetime for scheduled publishing")
+    visibility: str = Field(default="public", pattern="^(public|private|unlisted)$")
+    dry_run: bool = Field(default=False, description="Log what would happen without uploading")
+
+
+class PublishStatusResponse(BaseModel):
+    """Response with publish job details."""
+
+    publish_job_id: str
+    status: str
+    platform: str
+    platform_video_id: str | None = None
+    platform_url: str | None = None
+    scheduled_publish_at: str | None = None
+    visibility: str | None = None
+    forced_private: bool = False
+    error_message: str | None = None
+    dry_run: bool = False
+
+
+@router.post(
+    "/shorts/publish",
+    response_model=JobResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+    summary="Publish short video",
+    description="Enqueue the publish pipeline to upload a rendered video to platforms.",
+)
+async def trigger_publish_short(request: PublishShortRequest) -> JobResponse:
+    """Trigger the publish pipeline for a video job."""
+    if not request.youtube_account:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="At least one platform account must be specified (youtube_account)",
+        )
+
+    logger.info(
+        "publish_short_triggered",
+        video_job_id=request.video_job_id,
+        youtube_account=request.youtube_account,
+        dry_run=request.dry_run,
+    )
+
+    task = run_publish_pipeline_task.delay(
+        video_job_id=request.video_job_id,
+        youtube_account=request.youtube_account,
+        scheduled_publish_at=request.scheduled_publish_at,
+        visibility=request.visibility,
+        dry_run=request.dry_run,
+    )
+
+    return JobResponse(
+        task_id=task.id,
+        status="queued",
+        message="Publish pipeline enqueued successfully",
+    )
+
+
+@router.get(
+    "/publish/{publish_job_id}",
+    response_model=PublishStatusResponse,
+    summary="Get publish job status",
+    description="Get the status of a specific publish job.",
+)
+async def get_publish_job_status(publish_job_id: str) -> PublishStatusResponse:
+    """Get the status of a publish job."""
+    from shorts_engine.db.models import PublishJobModel
+    from shorts_engine.db.session import get_session_context
+
+    try:
+        job_uuid = UUID(publish_job_id)
+    except ValueError:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid publish job ID",
+        )
+
+    with get_session_context() as session:
+        publish_job = session.get(PublishJobModel, job_uuid)
+
+        if not publish_job:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Publish job not found",
+            )
+
+        return PublishStatusResponse(
+            publish_job_id=str(publish_job.id),
+            status=publish_job.status,
+            platform=publish_job.platform,
+            platform_video_id=publish_job.platform_video_id,
+            platform_url=publish_job.platform_url,
+            scheduled_publish_at=(
+                publish_job.scheduled_publish_at.isoformat()
+                if publish_job.scheduled_publish_at
+                else None
+            ),
+            visibility=publish_job.visibility,
+            forced_private=publish_job.forced_private,
+            error_message=publish_job.error_message,
+            dry_run=publish_job.dry_run,
+        )

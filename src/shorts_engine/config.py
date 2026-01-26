@@ -85,9 +85,28 @@ class Settings(BaseSettings):
     creatomate_api_key: str | None = Field(default=None, description="Creatomate API key")
     creatomate_webhook_url: str | None = Field(default=None, description="Creatomate webhook URL for render completion")
     elevenlabs_api_key: str | None = Field(default=None, description="ElevenLabs API key")
-    youtube_api_key: str | None = Field(default=None, description="YouTube API key")
     tiktok_client_key: str | None = Field(default=None, description="TikTok client key")
     instagram_access_token: str | None = Field(default=None, description="Instagram access token")
+
+    # YouTube OAuth (for multi-account publishing)
+    youtube_client_id: str | None = Field(default=None, description="YouTube OAuth client ID")
+    youtube_client_secret: str | None = Field(default=None, description="YouTube OAuth client secret")
+    youtube_redirect_uri: str = Field(
+        default="http://localhost:8085/callback",
+        description="YouTube OAuth redirect URI",
+    )
+
+    # Encryption (for token storage)
+    encryption_master_key: str | None = Field(
+        default=None,
+        description="Fernet encryption key for secure token storage",
+    )
+
+    # Publishing guardrails
+    youtube_max_uploads_per_day: int = Field(
+        default=50,
+        description="Maximum YouTube uploads per account per day",
+    )
 
 
 @lru_cache
