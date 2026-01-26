@@ -1,6 +1,5 @@
 """Celery task definitions for the video pipeline."""
 
-import asyncio
 from datetime import datetime
 from typing import Any
 from uuid import UUID
@@ -13,18 +12,10 @@ from shorts_engine.adapters.video_gen.base import VideoGenRequest
 from shorts_engine.adapters.video_gen.stub import StubVideoGenProvider
 from shorts_engine.domain.enums import Platform
 from shorts_engine.logging import get_logger
+from shorts_engine.utils import run_async
 from shorts_engine.worker import celery_app
 
 logger = get_logger(__name__)
-
-
-def run_async(coro: Any) -> Any:
-    """Run an async coroutine in a sync context."""
-    loop = asyncio.new_event_loop()
-    try:
-        return loop.run_until_complete(coro)
-    finally:
-        loop.close()
 
 
 @celery_app.task(bind=True, name="smoke_test")

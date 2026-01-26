@@ -25,10 +25,12 @@ shorts_app = typer.Typer(help="Video shorts creation commands")
 projects_app = typer.Typer(help="Project management commands")
 accounts_app = typer.Typer(help="Platform account management commands")
 ingest_app = typer.Typer(help="Analytics and comments ingestion commands")
+learning_app = typer.Typer(help="Learning loop commands")
 app.add_typer(shorts_app, name="shorts")
 app.add_typer(projects_app, name="projects")
 app.add_typer(accounts_app, name="accounts")
 app.add_typer(ingest_app, name="ingest")
+app.add_typer(learning_app, name="learn")
 
 console = Console()
 
@@ -1201,6 +1203,441 @@ def ingest_comments(
     except Exception as e:
         console.print(f"[bold red]Error: {e}[/bold red]")
         raise typer.Exit(code=1)
+
+
+# =============================================================================
+# LEARNING LOOP COMMANDS
+# =============================================================================
+
+
+@learning_app.command("plan-next")
+def plan_next(
+    project: str = typer.Option(..., "--project", "-p", help="Project ID (UUID)"),
+    n: int = typer.Option(5, "--count", "-n", help="Number of videos to plan"),
+    topics_file: Optional[str] = typer.Option(None, "--topics-file", "-f", help="File with topics (one per line)"),
+    topics: Optional[str] = typer.Option(None, "--topics", "-t", help="Comma-separated list of topics"),
+    wait: bool = typer.Option(False, "--wait", "-w", help="Wait for completion"),
+) -> None:
+    """Plan the next batch of videos using the learning loop.
+
+    Uses exploit/explore strategy:
+    - 70% of videos use top-performing recipes (exploit)
+    - 30% of videos test variations (explore/A-B test)
+
+    Requires a list of topic ideas, either via --topics-file or --topics.
+
+    Example:
+        shorts-engine learn plan-next --project <uuid> --topics-file topics.txt --count 5
+        shorts-engine learn plan-next --project <uuid> --topics "Topic 1,Topic 2,Topic 3" -n 3
+    """
+    # Validate project ID
+    try:
+        project_uuid = UUID(project)
+    except ValueError:
+        console.print(f"[bold red]Invalid project ID: {project}[/bold red]")
+        raise typer.Exit(code=1)
+
+    # Load topics
+    topic_list: list[str] = []
+
+    if topics_file:
+        try:
+            with open(topics_file, "r") as f:
+                topic_list = [line.strip() for line in f if line.strip()]
+        except FileNotFoundError:
+            console.print(f"[bold red]Topics file not found: {topics_file}[/bold red]")
+            raise typer.Exit(code=1)
+
+    if topics:
+        topic_list.extend([t.strip() for t in topics.split(",") if t.strip()])
+
+    if not topic_list:
+        console.print("[bold red]No topics provided. Use --topics-file or --topics.[/bold red]")
+        console.print("[dim]Example: --topics 'A day in the life of a samurai,Epic battle scene,Mysterious temple'[/dim]")
+        raise typer.Exit(code=1)
+
+    console.print(Panel.fit(
+        f"[bold]Planning Next Batch[/bold]\n\n"
+        f"[cyan]Project:[/cyan] {project}\n"
+        f"[cyan]Videos to plan:[/cyan] {min(n, len(topic_list))}\n"
+        f"[cyan]Topics provided:[/cyan] {len(topic_list)}\n"
+        f"[cyan]Strategy:[/cyan] 70% exploit / 30% explore",
+        title="Learning Loop Batch",
+        border_style="magenta",
+    ))
+
+    try:
+        from shorts_engine.jobs.learning_jobs import plan_next_batch_task
+
+        result = plan_next_batch_task.delay(
+            project_id=str(project_uuid),
+            n=n,
+            topics=topic_list[:n],  # Limit to n topics
+        )
+        console.print(f"[dim]Task ID: {result.id}[/dim]")
+
+        if wait:
+            console.print("[dim]Waiting for completion...[/dim]")
+            with console.status("[bold magenta]Planning batch...", spinner="dots"):
+                task_result = result.get(timeout=300)
+
+            if task_result.get("success"):
+                console.print(f"[bold green]Batch planned successfully![/bold green]")
+
+                table = Table(title="Batch Results")
+                table.add_column("Field", style="cyan")
+                table.add_column("Value")
+
+                table.add_row("Batch ID", task_result.get("batch_id", "N/A"))
+                table.add_row("Jobs Created", str(task_result.get("jobs_created", 0)))
+                table.add_row("Exploit (top recipes)", str(task_result.get("exploit_count", 0)))
+                table.add_row("Explore (A/B tests)", str(task_result.get("explore_count", 0)))
+
+                console.print(table)
+
+                # Show job IDs
+                job_ids = task_result.get("job_ids", [])
+                if job_ids:
+                    console.print(f"\n[bold]Created Video Jobs:[/bold]")
+                    for job_id in job_ids[:5]:  # Show first 5
+                        console.print(f"  {job_id}")
+                    if len(job_ids) > 5:
+                        console.print(f"  [dim]... and {len(job_ids) - 5} more[/dim]")
+
+                console.print(f"\n[dim]Run video pipelines with:[/dim]")
+                console.print(f"[dim]  shorts-engine shorts job <video_job_id>[/dim]")
+            else:
+                console.print(f"[bold red]Batch planning failed![/bold red]")
+                console.print(f"[red]{task_result.get('error', 'Unknown error')}[/red]")
+                raise typer.Exit(code=1)
+        else:
+            console.print(f"[green]Batch planning task enqueued![/green]")
+            console.print(f"[dim]Use 'shorts-engine status {result.id}' to check progress[/dim]")
+
+    except Exception as e:
+        console.print(f"[bold red]Error: {e}[/bold red]")
+        raise typer.Exit(code=1)
+
+
+@learning_app.command("recipes")
+def list_recipes(
+    project: str = typer.Option(..., "--project", "-p", help="Project ID (UUID)"),
+    limit: int = typer.Option(10, "--limit", "-n", help="Number of recipes to show"),
+) -> None:
+    """List top-performing recipes for a project.
+
+    Shows recipes sorted by average reward score, including:
+    - Recipe components (preset, hook type, scene count, etc.)
+    - Performance stats (times used, average reward)
+
+    Example:
+        shorts-engine learn recipes --project <uuid>
+    """
+    from shorts_engine.db.models import RecipeModel
+    from shorts_engine.db.session import get_session_context
+    from sqlalchemy import desc, select
+
+    try:
+        project_uuid = UUID(project)
+    except ValueError:
+        console.print(f"[bold red]Invalid project ID: {project}[/bold red]")
+        raise typer.Exit(code=1)
+
+    with get_session_context() as session:
+        recipes = session.execute(
+            select(RecipeModel)
+            .where(RecipeModel.project_id == project_uuid)
+            .order_by(desc(RecipeModel.avg_reward_score).nullslast())
+            .limit(limit)
+        ).scalars().all()
+
+        if not recipes:
+            console.print("[dim]No recipes found. Videos need recipe assignments via backfill or batch planning.[/dim]")
+            return
+
+        table = Table(title="Top Recipes")
+        table.add_column("Preset", style="cyan")
+        table.add_column("Hook")
+        table.add_column("Scenes")
+        table.add_column("WPM")
+        table.add_column("Captions")
+        table.add_column("Ending")
+        table.add_column("Uses", style="green")
+        table.add_column("Avg Reward", style="magenta")
+
+        for r in recipes:
+            table.add_row(
+                r.preset[:15],
+                r.hook_type[:10],
+                str(r.scene_count),
+                r.narration_wpm_bucket[:6],
+                r.caption_density_bucket[:6],
+                r.ending_type[:10],
+                str(r.times_used or 0),
+                f"{r.avg_reward_score:.3f}" if r.avg_reward_score else "-",
+            )
+
+        console.print(table)
+
+
+@learning_app.command("experiments")
+def list_experiments(
+    project: str = typer.Option(..., "--project", "-p", help="Project ID (UUID)"),
+    status_filter: Optional[str] = typer.Option(None, "--status", "-s", help="Filter by status (running, completed, inconclusive)"),
+    limit: int = typer.Option(10, "--limit", "-n", help="Number of experiments to show"),
+) -> None:
+    """List A/B test experiments for a project.
+
+    Shows experiments including:
+    - Variable being tested and values
+    - Sample sizes and results
+    - Winner determination
+
+    Example:
+        shorts-engine learn experiments --project <uuid>
+        shorts-engine learn experiments --project <uuid> --status completed
+    """
+    from shorts_engine.db.models import ExperimentModel
+    from shorts_engine.db.session import get_session_context
+    from sqlalchemy import desc, select
+
+    try:
+        project_uuid = UUID(project)
+    except ValueError:
+        console.print(f"[bold red]Invalid project ID: {project}[/bold red]")
+        raise typer.Exit(code=1)
+
+    with get_session_context() as session:
+        query = select(ExperimentModel).where(ExperimentModel.project_id == project_uuid)
+
+        if status_filter:
+            query = query.where(ExperimentModel.status == status_filter)
+
+        query = query.order_by(desc(ExperimentModel.created_at)).limit(limit)
+
+        experiments = session.execute(query).scalars().all()
+
+        if not experiments:
+            console.print("[dim]No experiments found. Explore mode during batch planning creates experiments.[/dim]")
+            return
+
+        table = Table(title="A/B Experiments")
+        table.add_column("Variable", style="cyan")
+        table.add_column("Baseline")
+        table.add_column("Variant")
+        table.add_column("B#", style="dim")
+        table.add_column("V#", style="dim")
+        table.add_column("B Reward")
+        table.add_column("V Reward")
+        table.add_column("Winner", style="green")
+        table.add_column("Status")
+
+        for e in experiments:
+            winner_style = ""
+            if e.winner == "variant":
+                winner_style = "[green]variant[/green]"
+            elif e.winner == "baseline":
+                winner_style = "[yellow]baseline[/yellow]"
+            elif e.winner == "inconclusive":
+                winner_style = "[dim]tie[/dim]"
+            else:
+                winner_style = "-"
+
+            status_style = ""
+            if e.status == "running":
+                status_style = "[blue]running[/blue]"
+            elif e.status == "completed":
+                status_style = "[green]done[/green]"
+            else:
+                status_style = f"[dim]{e.status}[/dim]"
+
+            table.add_row(
+                e.variable_tested[:12],
+                e.baseline_value[:12],
+                e.variant_value[:12],
+                str(e.baseline_video_count),
+                str(e.variant_video_count),
+                f"{e.baseline_avg_reward:.3f}" if e.baseline_avg_reward else "-",
+                f"{e.variant_avg_reward:.3f}" if e.variant_avg_reward else "-",
+                winner_style,
+                status_style,
+            )
+
+        console.print(table)
+
+
+@learning_app.command("stats")
+def learning_stats(
+    project: str = typer.Option(..., "--project", "-p", help="Project ID (UUID)"),
+) -> None:
+    """Show learning loop statistics for a project.
+
+    Displays:
+    - Total recipes and experiments
+    - Recent video counts
+    - Average reward score
+    - Top performing recipe
+
+    Example:
+        shorts-engine learn stats --project <uuid>
+    """
+    from datetime import timedelta, timezone
+    from datetime import datetime
+    from shorts_engine.db.models import ExperimentModel, PlannedBatchModel, RecipeModel, VideoJobModel, VideoMetricsModel, PublishJobModel
+    from shorts_engine.db.session import get_session_context
+    from sqlalchemy import desc, func, select
+
+    try:
+        project_uuid = UUID(project)
+    except ValueError:
+        console.print(f"[bold red]Invalid project ID: {project}[/bold red]")
+        raise typer.Exit(code=1)
+
+    with get_session_context() as session:
+        # Count recipes
+        total_recipes = session.execute(
+            select(func.count()).select_from(RecipeModel).where(RecipeModel.project_id == project_uuid)
+        ).scalar() or 0
+
+        # Count experiments
+        total_experiments = session.execute(
+            select(func.count()).select_from(ExperimentModel).where(ExperimentModel.project_id == project_uuid)
+        ).scalar() or 0
+
+        running_experiments = session.execute(
+            select(func.count()).select_from(ExperimentModel).where(
+                ExperimentModel.project_id == project_uuid,
+                ExperimentModel.status == "running",
+            )
+        ).scalar() or 0
+
+        # Count batches
+        total_batches = session.execute(
+            select(func.count()).select_from(PlannedBatchModel).where(PlannedBatchModel.project_id == project_uuid)
+        ).scalar() or 0
+
+        # Videos last 7 days
+        cutoff = datetime.now(timezone.utc) - timedelta(days=7)
+        videos_7d = session.execute(
+            select(func.count()).select_from(VideoJobModel).where(
+                VideoJobModel.project_id == project_uuid,
+                VideoJobModel.created_at >= cutoff,
+            )
+        ).scalar() or 0
+
+        # Average reward
+        avg_reward = session.execute(
+            select(func.avg(VideoMetricsModel.reward_score))
+            .join(PublishJobModel, VideoMetricsModel.publish_job_id == PublishJobModel.id)
+            .join(VideoJobModel, PublishJobModel.video_job_id == VideoJobModel.id)
+            .where(
+                VideoJobModel.project_id == project_uuid,
+                VideoMetricsModel.window_type == "24h",
+                VideoMetricsModel.reward_score.isnot(None),
+            )
+        ).scalar()
+
+        # Top recipe
+        top_recipe = session.execute(
+            select(RecipeModel)
+            .where(
+                RecipeModel.project_id == project_uuid,
+                RecipeModel.avg_reward_score.isnot(None),
+            )
+            .order_by(desc(RecipeModel.avg_reward_score))
+            .limit(1)
+        ).scalar_one_or_none()
+
+        console.print(Panel.fit(
+            f"[bold]Learning Loop Stats[/bold]\n\n"
+            f"[cyan]Total Recipes:[/cyan] {total_recipes}\n"
+            f"[cyan]Total Experiments:[/cyan] {total_experiments}\n"
+            f"[cyan]Running Experiments:[/cyan] {running_experiments}\n"
+            f"[cyan]Total Batches:[/cyan] {total_batches}\n"
+            f"[cyan]Videos (Last 7d):[/cyan] {videos_7d}\n"
+            f"[cyan]Avg Reward Score:[/cyan] {avg_reward:.4f if avg_reward else 'N/A'}\n\n"
+            f"[bold]Top Recipe:[/bold]\n"
+            + (
+                f"  Preset: {top_recipe.preset}\n"
+                f"  Hook: {top_recipe.hook_type}\n"
+                f"  Scenes: {top_recipe.scene_count}\n"
+                f"  Avg Reward: {top_recipe.avg_reward_score:.4f}\n"
+                f"  Uses: {top_recipe.times_used}"
+                if top_recipe else "  No recipes with performance data yet"
+            ),
+            title=f"Project {str(project_uuid)[:8]}...",
+            border_style="magenta",
+        ))
+
+
+@learning_app.command("backfill")
+def backfill_recipes(
+    project: str = typer.Option(..., "--project", "-p", help="Project ID (UUID)"),
+) -> None:
+    """Backfill recipe assignments for existing videos.
+
+    Scans existing videos that have feature data but no recipe assignment,
+    extracts their recipe, and creates the assignment.
+
+    Example:
+        shorts-engine learn backfill --project <uuid>
+    """
+    from shorts_engine.db.session import get_session_context
+    from shorts_engine.services.learning.recipe import RecipeService
+
+    try:
+        project_uuid = UUID(project)
+    except ValueError:
+        console.print(f"[bold red]Invalid project ID: {project}[/bold red]")
+        raise typer.Exit(code=1)
+
+    console.print("[bold blue]Backfilling recipes from existing videos...[/bold blue]")
+
+    with get_session_context() as session:
+        recipe_service = RecipeService(session)
+        count = recipe_service.backfill_recipes_from_features(project_uuid)
+
+        console.print(f"[green]Backfill complete![/green]")
+        console.print(f"[cyan]Videos updated:[/cyan] {count}")
+
+
+@learning_app.command("update-stats")
+def update_recipe_stats(
+    project: str = typer.Option(..., "--project", "-p", help="Project ID (UUID)"),
+    lookback_days: int = typer.Option(30, "--days", "-d", help="Days to look back"),
+) -> None:
+    """Update recipe statistics from performance data.
+
+    Recalculates reward scores and updates recipe averages.
+    Run this after ingesting new metrics.
+
+    Example:
+        shorts-engine learn update-stats --project <uuid>
+    """
+    from shorts_engine.db.session import get_session_context
+    from shorts_engine.services.learning.recipe import RecipeService
+    from shorts_engine.services.learning.reward import RewardCalculator
+
+    try:
+        project_uuid = UUID(project)
+    except ValueError:
+        console.print(f"[bold red]Invalid project ID: {project}[/bold red]")
+        raise typer.Exit(code=1)
+
+    console.print(f"[bold blue]Updating recipe stats (last {lookback_days} days)...[/bold blue]")
+
+    with get_session_context() as session:
+        # Update reward scores
+        reward_calc = RewardCalculator(session, project_uuid)
+        scores_updated = reward_calc.update_stored_scores(lookback_days)
+        console.print(f"[dim]Reward scores updated: {scores_updated}[/dim]")
+
+        # Update recipe stats
+        recipe_service = RecipeService(session)
+        recipes_updated = recipe_service.update_all_recipe_stats(project_uuid)
+
+        console.print(f"[green]Stats update complete![/green]")
+        console.print(f"[cyan]Recipes updated:[/cyan] {recipes_updated}")
 
 
 if __name__ == "__main__":

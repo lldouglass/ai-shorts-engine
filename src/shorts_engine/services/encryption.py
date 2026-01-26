@@ -4,14 +4,17 @@ Uses Fernet symmetric encryption with a master key from environment variables.
 """
 
 import base64
-import logging
 import os
-import secrets
 from functools import lru_cache
 
 from cryptography.fernet import Fernet, InvalidToken
 
-logger = logging.getLogger(__name__)
+from shorts_engine.logging import get_logger
+
+logger = get_logger(__name__)
+
+# Module-level storage for the generated dev key (persists for process lifetime)
+_generated_dev_key: str | None = None
 
 
 class EncryptionError(Exception):
@@ -24,8 +27,10 @@ def _get_master_key() -> bytes:
     """Get the master encryption key from environment.
 
     The key must be a valid 32-byte base64-encoded Fernet key.
-    If not set, raises an error in production or generates a warning key for development.
+    If not set, raises an error in production or generates a random key for development.
     """
+    global _generated_dev_key
+
     key = os.environ.get("ENCRYPTION_MASTER_KEY")
 
     if not key:
@@ -37,16 +42,16 @@ def _get_master_key() -> bytes:
                 "Generate one with: python -c 'from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())'"
             )
 
-        # Development fallback - use a deterministic key for local testing
-        # WARNING: This is not secure and should never be used in production
-        logger.warning(
-            "ENCRYPTION_MASTER_KEY not set. Using development fallback key. "
-            "DO NOT USE IN PRODUCTION!"
-        )
-        # Generate a deterministic key from a known seed for development
-        # This allows tokens to persist across restarts in development
-        dev_seed = b"shorts-engine-dev-key-not-for-prod!"
-        key = base64.urlsafe_b64encode(dev_seed[:32]).decode()
+        # Development fallback - generate a random key once per process
+        # This is more secure than a deterministic key, but tokens won't persist across restarts
+        if _generated_dev_key is None:
+            _generated_dev_key = Fernet.generate_key().decode()
+            logger.warning(
+                "encryption_using_generated_key",
+                hint="Set ENCRYPTION_MASTER_KEY in .env for token persistence across restarts",
+                warning="Tokens encrypted in this session will be unreadable after restart",
+            )
+        key = _generated_dev_key
 
     return key.encode() if isinstance(key, str) else key
 

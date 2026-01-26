@@ -11,7 +11,6 @@ All tasks support:
 - Proper error handling and status updates
 """
 
-import asyncio
 from datetime import datetime, timezone
 from typing import Any
 from uuid import UUID, uuid4
@@ -33,18 +32,10 @@ from shorts_engine.db.models import AssetModel, SceneModel, VideoJobModel
 from shorts_engine.db.session import get_session_context
 from shorts_engine.logging import get_logger
 from shorts_engine.services.storage import StorageService
+from shorts_engine.utils import run_async
 from shorts_engine.worker import celery_app
 
 logger = get_logger(__name__)
-
-
-def run_async(coro: Any) -> Any:
-    """Run an async coroutine in a sync context."""
-    loop = asyncio.new_event_loop()
-    try:
-        return loop.run_until_complete(coro)
-    finally:
-        loop.close()
 
 
 def get_voiceover_provider():

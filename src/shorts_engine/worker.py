@@ -59,6 +59,10 @@ celery_app.conf.update(
         "render.render_final_video": {"queue": "high"},
         "render.mark_ready_to_publish": {"queue": "high"},
         "render.run_render_pipeline": {"queue": "high"},
+        # Learning loop tasks
+        "plan_next_batch": {"queue": "learning"},
+        "update_recipe_stats": {"queue": "learning"},
+        "evaluate_experiments": {"queue": "learning"},
     },
     # Beat scheduler (for periodic tasks)
     beat_schedule={
@@ -75,6 +79,20 @@ celery_app.conf.update(
             "schedule": 21600.0,  # 6 hours
             "args": (168, 100),  # since_hours, max_per_video
             "options": {"queue": "low"},
+        },
+        # Learning loop - update recipe stats daily at 2 AM UTC
+        "update-recipe-stats-daily": {
+            "task": "update_recipe_stats",
+            "schedule": 86400.0,  # 24 hours
+            "args": (),  # Will need project_id passed via scheduled task
+            "options": {"queue": "learning"},
+        },
+        # Learning loop - evaluate experiments daily at 3 AM UTC
+        "evaluate-experiments-daily": {
+            "task": "evaluate_experiments",
+            "schedule": 86400.0,  # 24 hours
+            "args": (),  # Will need project_id passed via scheduled task
+            "options": {"queue": "learning"},
         },
     },
 )

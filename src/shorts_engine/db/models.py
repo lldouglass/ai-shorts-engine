@@ -85,6 +85,18 @@ class VideoJobModel(Base):
     updated_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), onupdate=func.now()
     )
+    # Learning loop fields
+    recipe_id: Mapped[PyUUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("recipes.id", ondelete="SET NULL"), nullable=True
+    )
+    experiment_id: Mapped[PyUUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("experiments.id", ondelete="SET NULL"), nullable=True
+    )
+    generation_mode: Mapped[str | None] = mapped_column(String(20), nullable=True)  # exploit, explore, manual
+    batch_id: Mapped[PyUUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("planned_batches.id", ondelete="SET NULL"), nullable=True
+    )
+    topic_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)  # For deduplication
 
     # Relationships
     project: Mapped["ProjectModel"] = relationship("ProjectModel", back_populates="video_jobs")
@@ -96,6 +108,15 @@ class VideoJobModel(Base):
     )
     recipe_features: Mapped["VideoRecipeFeaturesModel | None"] = relationship(
         "VideoRecipeFeaturesModel", back_populates="video_job", uselist=False, cascade="all, delete-orphan"
+    )
+    recipe: Mapped["RecipeModel | None"] = relationship(
+        "RecipeModel", back_populates="video_jobs"
+    )
+    experiment: Mapped["ExperimentModel | None"] = relationship(
+        "ExperimentModel", back_populates="video_jobs"
+    )
+    batch: Mapped["PlannedBatchModel | None"] = relationship(
+        "PlannedBatchModel", back_populates="video_jobs"
     )
 
 
@@ -584,6 +605,8 @@ class VideoRecipeFeaturesModel(Base):
     # Style
     style_preset: Mapped[str | None] = mapped_column(String(100), nullable=True)
     aspect_ratio: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    # Ending
+    ending_type: Mapped[str | None] = mapped_column(String(50), nullable=True)  # cliffhanger, resolve
     # Raw feature vector for ML
     feature_vector: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
@@ -601,4 +624,129 @@ class VideoRecipeFeaturesModel(Base):
     # Relationships
     video_job: Mapped["VideoJobModel"] = relationship(
         "VideoJobModel", back_populates="recipe_features"
+    )
+
+
+# =============================================================================
+# Learning Loop Models
+# =============================================================================
+
+
+class RecipeModel(Base):
+    """Canonical recipe definition for video generation."""
+
+    __tablename__ = "recipes"
+
+    id: Mapped[PyUUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid4)
+    project_id: Mapped[PyUUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("projects.id", ondelete="CASCADE"), index=True
+    )
+    # Recipe components
+    preset: Mapped[str] = mapped_column(String(100), nullable=False)
+    hook_type: Mapped[str] = mapped_column(String(50), nullable=False)
+    scene_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    narration_wpm_bucket: Mapped[str] = mapped_column(String(20), nullable=False)  # slow, medium, fast
+    caption_density_bucket: Mapped[str] = mapped_column(String(20), nullable=False)  # sparse, medium, dense
+    ending_type: Mapped[str] = mapped_column(String(50), nullable=False)  # cliffhanger, resolve
+    # Recipe hash for deduplication
+    recipe_hash: Mapped[str] = mapped_column(String(64), nullable=False, unique=True)
+    # Performance aggregates (updated periodically)
+    times_used: Mapped[int] = mapped_column(Integer, server_default="0")
+    avg_reward_score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    best_reward_score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    last_used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # Metadata
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    updated_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), onupdate=func.now()
+    )
+
+    # Relationships
+    project: Mapped["ProjectModel"] = relationship("ProjectModel")
+    video_jobs: Mapped[list["VideoJobModel"]] = relationship(
+        "VideoJobModel", back_populates="recipe"
+    )
+    experiments: Mapped[list["ExperimentModel"]] = relationship(
+        "ExperimentModel", back_populates="baseline_recipe", foreign_keys="ExperimentModel.baseline_recipe_id"
+    )
+
+
+class ExperimentModel(Base):
+    """A/B test experiment tracking."""
+
+    __tablename__ = "experiments"
+
+    id: Mapped[PyUUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid4)
+    project_id: Mapped[PyUUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("projects.id", ondelete="CASCADE"), index=True
+    )
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Experiment type
+    variable_tested: Mapped[str] = mapped_column(String(50), nullable=False)
+    baseline_recipe_id: Mapped[PyUUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("recipes.id", ondelete="SET NULL"), nullable=True
+    )
+    baseline_value: Mapped[str] = mapped_column(String(100), nullable=False)
+    variant_value: Mapped[str] = mapped_column(String(100), nullable=False)
+    # Status
+    status: Mapped[str] = mapped_column(String(50), server_default="running")
+    # Results
+    baseline_video_count: Mapped[int] = mapped_column(Integer, server_default="0")
+    variant_video_count: Mapped[int] = mapped_column(Integer, server_default="0")
+    baseline_avg_reward: Mapped[float | None] = mapped_column(Float, nullable=True)
+    variant_avg_reward: Mapped[float | None] = mapped_column(Float, nullable=True)
+    winner: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    confidence: Mapped[float | None] = mapped_column(Float, nullable=True)
+    # Timestamps
+    started_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+    # Relationships
+    project: Mapped["ProjectModel"] = relationship("ProjectModel")
+    baseline_recipe: Mapped["RecipeModel | None"] = relationship(
+        "RecipeModel", back_populates="experiments", foreign_keys=[baseline_recipe_id]
+    )
+    video_jobs: Mapped[list["VideoJobModel"]] = relationship(
+        "VideoJobModel", back_populates="experiment"
+    )
+
+
+class PlannedBatchModel(Base):
+    """Nightly batch planning record."""
+
+    __tablename__ = "planned_batches"
+
+    id: Mapped[PyUUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid4)
+    project_id: Mapped[PyUUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("projects.id", ondelete="CASCADE"), index=True
+    )
+    # Batch info
+    batch_date: Mapped[datetime] = mapped_column(DateTime(timezone=False), nullable=False)
+    total_jobs: Mapped[int] = mapped_column(Integer, nullable=False)
+    exploit_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    explore_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    # Status
+    status: Mapped[str] = mapped_column(String(50), server_default="planned")
+    jobs_created: Mapped[int] = mapped_column(Integer, server_default="0")
+    jobs_completed: Mapped[int] = mapped_column(Integer, server_default="0")
+    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Timestamps
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    # Relationships
+    project: Mapped["ProjectModel"] = relationship("ProjectModel")
+    video_jobs: Mapped[list["VideoJobModel"]] = relationship(
+        "VideoJobModel", back_populates="batch"
     )

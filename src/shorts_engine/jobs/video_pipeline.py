@@ -12,7 +12,6 @@ All tasks support:
 - Proper error handling and status updates
 """
 
-import asyncio
 import hashlib
 from datetime import datetime, timezone
 from pathlib import Path
@@ -34,18 +33,10 @@ from shorts_engine.logging import get_logger
 from shorts_engine.presets.styles import get_preset
 from shorts_engine.services.planner import PlannerService
 from shorts_engine.services.storage import StorageService
+from shorts_engine.utils import run_async
 from shorts_engine.worker import celery_app
 
 logger = get_logger(__name__)
-
-
-def run_async(coro: Any) -> Any:
-    """Run an async coroutine in a sync context."""
-    loop = asyncio.new_event_loop()
-    try:
-        return loop.run_until_complete(coro)
-    finally:
-        loop.close()
 
 
 def generate_idempotency_key(project_id: str, idea: str, preset: str) -> str:

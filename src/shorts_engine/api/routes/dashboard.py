@@ -7,6 +7,7 @@ from uuid import UUID
 from fastapi import APIRouter, HTTPException, Query, status
 from pydantic import BaseModel, Field
 from sqlalchemy import desc, func, select
+from sqlalchemy.orm import selectinload
 
 from shorts_engine.db.models import (
     PublishJobModel,
@@ -169,7 +170,7 @@ async def get_top_videos(
             .subquery()
         )
 
-        # Main query
+        # Main query with eager loading for recipe_features to avoid N+1
         query = (
             select(
                 PublishJobModel,
@@ -186,6 +187,7 @@ async def get_top_videos(
                 latest_metrics_subq,
                 PublishJobModel.id == latest_metrics_subq.c.publish_job_id,
             )
+            .options(selectinload(VideoJobModel.recipe_features))
             .where(PublishJobModel.status == "published")
         )
 
@@ -209,12 +211,8 @@ async def get_top_videos(
             pub_job = row[0]
             video_job = row[1]
 
-            # Get recipe features if available
-            features = session.execute(
-                select(VideoRecipeFeaturesModel).where(
-                    VideoRecipeFeaturesModel.video_job_id == video_job.id
-                )
-            ).scalar_one_or_none()
+            # Use eager-loaded recipe_features (no extra query)
+            features = video_job.recipe_features
 
             videos.append(
                 VideoPerformance(
@@ -470,32 +468,37 @@ async def get_video_details(publish_job_id: str) -> dict[str, Any]:
         )
 
     with get_session_context() as session:
-        pub_job = session.get(PublishJobModel, job_uuid)
+        # Fetch publish_job with eager-loaded video_job and recipe_features
+        pub_job = session.execute(
+            select(PublishJobModel)
+            .options(
+                selectinload(PublishJobModel.video_job).selectinload(VideoJobModel.recipe_features)
+            )
+            .where(PublishJobModel.id == job_uuid)
+        ).scalar_one_or_none()
+
         if not pub_job:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="Publish job not found",
             )
 
-        video_job = session.get(VideoJobModel, pub_job.video_job_id)
+        video_job = pub_job.video_job
 
-        # Get latest metrics for each window type
+        # Fetch all metrics at once and group by window type (single query)
+        all_metrics = session.execute(
+            select(VideoMetricsModel)
+            .where(VideoMetricsModel.publish_job_id == job_uuid)
+            .order_by(VideoMetricsModel.window_type, desc(VideoMetricsModel.fetched_at))
+        ).scalars().all()
+
+        # Group by window type and take the latest (first after ordering)
         metrics_by_window = {}
-        for window in ["1h", "6h", "24h", "72h", "7d"]:
-            metric = (
-                session.execute(
-                    select(VideoMetricsModel)
-                    .where(
-                        VideoMetricsModel.publish_job_id == job_uuid,
-                        VideoMetricsModel.window_type == window,
-                    )
-                    .order_by(desc(VideoMetricsModel.fetched_at))
-                    .limit(1)
-                )
-                .scalar_one_or_none()
-            )
-            if metric:
-                metrics_by_window[window] = {
+        seen_windows: set[str] = set()
+        for metric in all_metrics:
+            if metric.window_type not in seen_windows:
+                seen_windows.add(metric.window_type)
+                metrics_by_window[metric.window_type] = {
                     "views": metric.views,
                     "likes": metric.likes,
                     "comments": metric.comments_count,
@@ -504,12 +507,8 @@ async def get_video_details(publish_job_id: str) -> dict[str, Any]:
                     "fetched_at": metric.fetched_at.isoformat() if metric.fetched_at else None,
                 }
 
-        # Get recipe features
-        features = session.execute(
-            select(VideoRecipeFeaturesModel).where(
-                VideoRecipeFeaturesModel.video_job_id == pub_job.video_job_id
-            )
-        ).scalar_one_or_none()
+        # Use eager-loaded recipe features
+        features = video_job.recipe_features if video_job else None
 
         # Get comment count
         comment_count = (
