@@ -29,9 +29,20 @@ from shorts_engine.adapters.video_gen.stub import StubVideoGenProvider
 from shorts_engine.config import settings
 from shorts_engine.db.models import AssetModel, ProjectModel, PromptModel, SceneModel, VideoJobModel
 from shorts_engine.db.session import get_session_context
+from shorts_engine.domain.enums import QACheckType, QAStage, QAStatus
 from shorts_engine.logging import get_logger
 from shorts_engine.presets.styles import get_preset
+from shorts_engine.services.alerting import alert_pipeline_failure, alert_qa_failure
+from shorts_engine.services.metrics import (
+    record_job_completed,
+    record_job_failed,
+    record_job_started,
+    record_qa_check,
+    record_cost_estimate,
+    estimate_planning_cost,
+)
 from shorts_engine.services.planner import PlannerService
+from shorts_engine.services.qa import QAService, QAFailedException
 from shorts_engine.services.storage import StorageService
 from shorts_engine.utils import run_async
 from shorts_engine.worker import celery_app
@@ -63,7 +74,7 @@ def get_video_gen_provider():
 @celery_app.task(
     bind=True,
     name="pipeline.plan_job",
-    max_retries=3,
+    max_retries=5,  # Increased for QA retries
     default_retry_delay=30,
     autoretry_for=(Exception,),
     retry_backoff=True,
@@ -75,6 +86,10 @@ def plan_job_task(
 ) -> dict[str, Any]:
     """Generate a video plan using the LLM planner.
 
+    Includes QA validation with retry logic:
+    - On QA fail with attempts < max: regenerate plan
+    - On QA fail with attempts exhausted: mark as FAILED_QA
+
     Args:
         video_job_id: UUID of the video job to plan
 
@@ -83,6 +98,7 @@ def plan_job_task(
     """
     task_id = self.request.id
     job_uuid = UUID(video_job_id)
+    start_time = datetime.now(timezone.utc)
 
     logger.info("plan_job_started", task_id=task_id, video_job_id=video_job_id)
 
@@ -92,23 +108,38 @@ def plan_job_task(
         if not job:
             raise ValueError(f"Video job not found: {video_job_id}")
 
-        # Idempotency check - skip if already planned
+        # Record job started metric
+        record_job_started(session, job_uuid, "planning")
+
+        # Idempotency check - skip if already planned and QA passed
         if job.stage in ("planned", "generating", "verifying", "ready"):
-            logger.info("plan_job_already_done", video_job_id=video_job_id, stage=job.stage)
-            scene_ids = [str(s.id) for s in job.scenes]
+            if job.qa_status == QAStatus.PASSED or not settings.qa_enabled:
+                logger.info("plan_job_already_done", video_job_id=video_job_id, stage=job.stage)
+                scene_ids = [str(s.id) for s in job.scenes]
+                return {
+                    "success": True,
+                    "video_job_id": video_job_id,
+                    "stage": job.stage,
+                    "scene_ids": scene_ids,
+                    "skipped": True,
+                }
+
+        # Check if QA has permanently failed
+        if job.qa_status == QAStatus.FAILED_QA:
+            logger.info("plan_job_qa_permanently_failed", video_job_id=video_job_id)
             return {
-                "success": True,
+                "success": False,
                 "video_job_id": video_job_id,
-                "stage": job.stage,
-                "scene_ids": scene_ids,
-                "skipped": True,
+                "stage": "failed_qa",
+                "error": job.last_qa_error,
             }
 
         # Update status
         job.status = "running"
         job.stage = "planning"
         job.celery_task_id = task_id
-        job.started_at = datetime.now(timezone.utc)
+        if not job.started_at:
+            job.started_at = start_time
         session.commit()
 
         try:
@@ -120,6 +151,12 @@ def plan_job_task(
             job.title = plan.title
             job.description = plan.description
             job.plan_data = plan.raw_response
+
+            # Clear existing scenes if regenerating
+            if job.scenes:
+                for scene in job.scenes:
+                    session.delete(scene)
+                session.flush()
 
             # Create scenes
             scene_ids = []
@@ -150,7 +187,104 @@ def plan_job_task(
                 )
                 session.add(prompt)
 
+            session.flush()
+
+            # Run QA check if enabled
+            if settings.qa_enabled:
+                job.qa_attempts = (job.qa_attempts or 0) + 1
+                qa_service = QAService()
+                qa_result = run_async(qa_service.check_plan(job, session))
+
+                # Save QA result
+                qa_service.save_qa_result(
+                    session=session,
+                    video_job_id=job_uuid,
+                    check_type=QACheckType.PLAN_QA,
+                    stage=QAStage.POST_PLANNING,
+                    attempt_number=job.qa_attempts,
+                    result=qa_result,
+                )
+
+                # Record QA metrics
+                record_qa_check(
+                    session=session,
+                    video_job_id=job_uuid,
+                    stage="post_planning",
+                    passed=qa_result.passed,
+                    hook_clarity=qa_result.hook_clarity_score,
+                    coherence=qa_result.coherence_score,
+                )
+
+                if not qa_result.passed:
+                    job.last_qa_error = qa_result.feedback
+
+                    if job.qa_attempts >= settings.qa_max_regeneration_attempts:
+                        # Exhausted retries - permanent failure
+                        job.qa_status = QAStatus.FAILED_QA
+                        job.status = "failed"
+                        job.stage = "failed_qa"
+                        session.commit()
+
+                        # Record failure metric
+                        record_job_failed(session, job_uuid, "planning", "qa_failed")
+
+                        # Send alert
+                        run_async(alert_qa_failure(
+                            video_job_id=job_uuid,
+                            qa_stage="post_planning",
+                            feedback=qa_result.feedback,
+                            attempt=job.qa_attempts,
+                            max_attempts=settings.qa_max_regeneration_attempts,
+                            scores={
+                                "hook_clarity": qa_result.hook_clarity_score,
+                                "coherence": qa_result.coherence_score,
+                            },
+                        ))
+
+                        logger.error(
+                            "plan_job_qa_failed_permanently",
+                            video_job_id=video_job_id,
+                            attempts=job.qa_attempts,
+                            feedback=qa_result.feedback,
+                        )
+
+                        return {
+                            "success": False,
+                            "video_job_id": video_job_id,
+                            "stage": "failed_qa",
+                            "qa_attempts": job.qa_attempts,
+                            "error": qa_result.feedback,
+                        }
+                    else:
+                        # Can retry - raise exception to trigger regeneration
+                        job.qa_status = QAStatus.FAILED
+                        session.commit()
+
+                        logger.warning(
+                            "plan_job_qa_failed_regenerating",
+                            video_job_id=video_job_id,
+                            attempt=job.qa_attempts,
+                            max_attempts=settings.qa_max_regeneration_attempts,
+                            feedback=qa_result.feedback,
+                        )
+
+                        raise QAFailedException(
+                            f"QA failed (attempt {job.qa_attempts}/{settings.qa_max_regeneration_attempts}): {qa_result.feedback}",
+                            qa_result,
+                        )
+
+                # QA passed
+                job.qa_status = QAStatus.PASSED
+            else:
+                job.qa_status = QAStatus.SKIPPED
+
             job.stage = "planned"
+
+            # Record success metrics
+            duration = (datetime.now(timezone.utc) - start_time).total_seconds()
+            record_job_completed(session, job_uuid, "planning", duration)
+            record_cost_estimate(session, job_uuid, estimate_planning_cost())
+
             session.commit()
 
             logger.info(
@@ -158,6 +292,7 @@ def plan_job_task(
                 video_job_id=video_job_id,
                 title=plan.title,
                 scene_count=len(scene_ids),
+                qa_status=job.qa_status,
             )
 
             return {
@@ -166,13 +301,30 @@ def plan_job_task(
                 "title": plan.title,
                 "scene_ids": scene_ids,
                 "total_duration": plan.total_duration,
+                "qa_status": job.qa_status,
             }
+
+        except QAFailedException:
+            # Re-raise QA exceptions to trigger retry
+            raise
 
         except Exception as e:
             job.status = "failed"
             job.error_message = str(e)
             job.retry_count = (job.retry_count or 0) + 1
             session.commit()
+
+            # Record failure
+            record_job_failed(session, job_uuid, "planning", type(e).__name__)
+
+            # Send alert for pipeline failure
+            run_async(alert_pipeline_failure(
+                video_job_id=job_uuid,
+                stage="planning",
+                error_message=str(e),
+                error_type=type(e).__name__,
+            ))
+
             raise
 
 

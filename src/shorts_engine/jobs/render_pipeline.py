@@ -30,7 +30,18 @@ from shorts_engine.adapters.voiceover.stub import StubVoiceoverProvider
 from shorts_engine.config import settings
 from shorts_engine.db.models import AssetModel, SceneModel, VideoJobModel
 from shorts_engine.db.session import get_session_context
+from shorts_engine.domain.enums import QACheckType, QAStage, QAStatus
 from shorts_engine.logging import get_logger
+from shorts_engine.services.alerting import alert_pipeline_failure, alert_qa_failure
+from shorts_engine.services.metrics import (
+    record_job_completed,
+    record_job_failed,
+    record_job_started,
+    record_qa_check,
+    record_cost_estimate,
+    estimate_rendering_cost,
+)
+from shorts_engine.services.qa import QAService
 from shorts_engine.services.storage import StorageService
 from shorts_engine.utils import run_async
 from shorts_engine.worker import celery_app
@@ -464,6 +475,9 @@ def mark_ready_to_publish_task(
 ) -> dict[str, Any]:
     """Mark a video job as ready to publish.
 
+    Includes post-render QA check for policy compliance.
+    Unlike planning QA, render QA failures do not retry (too expensive).
+
     Args:
         video_job_id: UUID of the video job
         render_result: Optional result from render stage
@@ -473,6 +487,7 @@ def mark_ready_to_publish_task(
     """
     task_id = self.request.id
     job_uuid = UUID(video_job_id)
+    start_time = datetime.now(timezone.utc)
 
     logger.info("mark_ready_to_publish_started", task_id=task_id, video_job_id=video_job_id)
 
@@ -481,12 +496,17 @@ def mark_ready_to_publish_task(
         if not job:
             raise ValueError(f"Video job not found: {video_job_id}")
 
+        # Record job started
+        record_job_started(session, job_uuid, "post_render")
+
         # Check render result
         if render_result and not render_result.get("success"):
             job.status = "failed"
             job.stage = "render_failed"
             job.error_message = render_result.get("error", "Render failed")
             session.commit()
+
+            record_job_failed(session, job_uuid, "rendering", "render_failed")
 
             return {
                 "success": False,
@@ -509,11 +529,73 @@ def mark_ready_to_publish_task(
             job.error_message = "No final video asset found"
             session.commit()
 
+            record_job_failed(session, job_uuid, "post_render", "no_asset")
+
             return {
                 "success": False,
                 "video_job_id": video_job_id,
                 "error": "No final video asset found",
             }
+
+        # Run post-render QA check
+        if settings.qa_enabled:
+            qa_service = QAService()
+            qa_result = run_async(qa_service.check_render(job, session))
+
+            # Save QA result
+            qa_service.save_qa_result(
+                session=session,
+                video_job_id=job_uuid,
+                check_type=QACheckType.RENDER_QA,
+                stage=QAStage.POST_RENDER,
+                attempt_number=1,  # No retries for render QA
+                result=qa_result,
+            )
+
+            # Record QA metrics
+            record_qa_check(
+                session=session,
+                video_job_id=job_uuid,
+                stage="post_render",
+                passed=qa_result.passed,
+                hook_clarity=qa_result.hook_clarity_score,
+                coherence=qa_result.coherence_score,
+            )
+
+            if not qa_result.passed:
+                # Render QA failure - no retry (too expensive)
+                # Block publish but don't fail the job entirely
+                job.stage = "render_qa_failed"
+                job.last_qa_error = qa_result.feedback
+                session.commit()
+
+                # Send alert
+                run_async(alert_qa_failure(
+                    video_job_id=job_uuid,
+                    qa_stage="post_render",
+                    feedback=qa_result.feedback,
+                    attempt=1,
+                    max_attempts=1,
+                    scores={
+                        "policy_passed": qa_result.policy_passed,
+                        "policy_violations": qa_result.policy_violations,
+                    },
+                ))
+
+                logger.warning(
+                    "render_qa_failed",
+                    video_job_id=video_job_id,
+                    feedback=qa_result.feedback,
+                )
+
+                return {
+                    "success": False,
+                    "video_job_id": video_job_id,
+                    "stage": "render_qa_failed",
+                    "qa_passed": False,
+                    "qa_feedback": qa_result.feedback,
+                    "error": f"Render QA failed: {qa_result.feedback}",
+                }
 
         # Get final MP4 URL
         final_mp4_url = final_asset.url
@@ -529,6 +611,11 @@ def mark_ready_to_publish_task(
         job.metadata_ = job.metadata_ or {}
         job.metadata_["final_mp4_url"] = final_mp4_url
         job.metadata_["final_asset_id"] = str(final_asset.id)
+
+        # Record success metrics
+        duration = (datetime.now(timezone.utc) - start_time).total_seconds()
+        record_job_completed(session, job_uuid, "post_render", duration)
+        record_cost_estimate(session, job_uuid, estimate_rendering_cost())
 
         session.commit()
 

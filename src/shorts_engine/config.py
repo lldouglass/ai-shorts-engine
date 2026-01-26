@@ -132,6 +132,86 @@ class Settings(BaseSettings):
         description="Maximum TikTok posts per account per day",
     )
 
+    # QA Configuration
+    qa_enabled: bool = Field(
+        default=True,
+        description="Enable QA validation gates in the pipeline",
+    )
+    qa_hook_clarity_threshold: float = Field(
+        default=0.7,
+        description="Minimum hook clarity score (0.0-1.0) to pass QA",
+    )
+    qa_coherence_threshold: float = Field(
+        default=0.7,
+        description="Minimum coherence score (0.0-1.0) to pass QA",
+    )
+    qa_max_regeneration_attempts: int = Field(
+        default=2,
+        description="Maximum times to regenerate plan on QA failure",
+    )
+    qa_uniqueness_lookback_count: int = Field(
+        default=30,
+        description="Number of recent scripts to check for uniqueness",
+    )
+    qa_uniqueness_similarity_threshold: float = Field(
+        default=0.85,
+        description="Maximum Jaccard similarity allowed with recent scripts",
+    )
+
+    # Alerting
+    alert_discord_webhook_url: str | None = Field(
+        default=None,
+        description="Discord webhook URL for alerts",
+    )
+    alert_email_smtp_host: str | None = Field(
+        default=None,
+        description="SMTP host for email alerts",
+    )
+    alert_email_smtp_port: int = Field(
+        default=587,
+        description="SMTP port for email alerts",
+    )
+    alert_email_from: str | None = Field(
+        default=None,
+        description="From address for email alerts",
+    )
+    alert_email_to: list[str] = Field(
+        default_factory=list,
+        description="Recipient addresses for email alerts",
+    )
+    alert_email_username: str | None = Field(
+        default=None,
+        description="SMTP username for email alerts",
+    )
+    alert_email_password: str | None = Field(
+        default=None,
+        description="SMTP password for email alerts",
+    )
+    alert_on_qa_failure: bool = Field(
+        default=True,
+        description="Send alerts on QA validation failures",
+    )
+    alert_on_pipeline_failure: bool = Field(
+        default=True,
+        description="Send alerts on pipeline failures",
+    )
+
+    # Publishing Control
+    autopublish_enabled: bool = Field(
+        default=False,
+        description="Enable automatic publishing (disabled by default for safety)",
+    )
+
+    # Metrics
+    metrics_enabled: bool = Field(
+        default=True,
+        description="Enable metrics collection",
+    )
+    metrics_retention_days: int = Field(
+        default=30,
+        description="Number of days to retain metrics data",
+    )
+
 
 @lru_cache
 def get_settings() -> Settings:

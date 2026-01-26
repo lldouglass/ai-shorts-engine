@@ -97,6 +97,10 @@ class VideoJobModel(Base):
         UUID(as_uuid=True), ForeignKey("planned_batches.id", ondelete="SET NULL"), nullable=True
     )
     topic_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)  # For deduplication
+    # QA fields
+    qa_status: Mapped[str | None] = mapped_column(String(50), nullable=True, index=True)
+    qa_attempts: Mapped[int] = mapped_column(Integer, server_default="0")
+    last_qa_error: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     # Relationships
     project: Mapped["ProjectModel"] = relationship("ProjectModel", back_populates="video_jobs")
@@ -117,6 +121,9 @@ class VideoJobModel(Base):
     )
     batch: Mapped["PlannedBatchModel | None"] = relationship(
         "PlannedBatchModel", back_populates="video_jobs"
+    )
+    qa_results: Mapped[list["QAResultModel"]] = relationship(
+        "QAResultModel", back_populates="video_job", cascade="all, delete-orphan"
     )
 
 
@@ -752,4 +759,65 @@ class PlannedBatchModel(Base):
     project: Mapped["ProjectModel"] = relationship("ProjectModel")
     video_jobs: Mapped[list["VideoJobModel"]] = relationship(
         "VideoJobModel", back_populates="batch"
+    )
+
+
+# =============================================================================
+# QA and Monitoring Models
+# =============================================================================
+
+
+class QAResultModel(Base):
+    """QA check result for a video job."""
+
+    __tablename__ = "qa_results"
+
+    id: Mapped[PyUUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid4)
+    video_job_id: Mapped[PyUUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("video_jobs.id", ondelete="CASCADE"), index=True
+    )
+    check_type: Mapped[str] = mapped_column(String(50), nullable=False, index=True)  # plan_qa, render_qa
+    stage: Mapped[str] = mapped_column(String(50), nullable=False)  # post_planning, post_render
+    attempt_number: Mapped[int] = mapped_column(Integer, nullable=False)
+    passed: Mapped[bool] = mapped_column(Boolean, nullable=False, index=True)
+    # Scores
+    hook_clarity_score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    coherence_score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    uniqueness_score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    policy_passed: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    # Details
+    policy_violations: Mapped[list[str] | None] = mapped_column(JSONB, nullable=True)
+    feedback: Mapped[str | None] = mapped_column(Text, nullable=True)
+    similar_job_id: Mapped[PyUUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
+    similarity_score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    # Raw response
+    raw_response: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
+    model_used: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    duration_seconds: Mapped[float | None] = mapped_column(Float, nullable=True)
+    # Timestamps
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+    # Relationships
+    video_job: Mapped["VideoJobModel"] = relationship(
+        "VideoJobModel", back_populates="qa_results"
+    )
+
+
+class PipelineMetricModel(Base):
+    """Time-series metrics for pipeline monitoring."""
+
+    __tablename__ = "pipeline_metrics"
+
+    id: Mapped[PyUUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid4)
+    metric_name: Mapped[str] = mapped_column(String(100), nullable=False, index=True)
+    metric_type: Mapped[str] = mapped_column(String(20), nullable=False)  # counter, gauge, histogram
+    value: Mapped[float] = mapped_column(Float, nullable=False)
+    labels: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
+    video_job_id: Mapped[PyUUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("video_jobs.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    recorded_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), index=True
     )

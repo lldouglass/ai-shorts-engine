@@ -7,7 +7,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from shorts_engine import __version__
-from shorts_engine.api.routes import accounts, admin, dashboard, health, jobs
+from shorts_engine.api.routes import accounts, admin, dashboard, health, jobs, monitoring
 from shorts_engine.config import settings
 from shorts_engine.logging import get_logger, setup_logging
 
@@ -66,6 +66,7 @@ app.include_router(jobs.router, prefix="/api/v1")
 app.include_router(accounts.router, prefix="/api/v1")
 app.include_router(dashboard.router, prefix="/api/v1")
 app.include_router(admin.router, prefix="/api/v1")
+app.include_router(monitoring.router, prefix="/api/v1")
 
 
 @app.get("/", include_in_schema=False)

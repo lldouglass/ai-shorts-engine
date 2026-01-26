@@ -147,3 +147,27 @@ class PublishStatus(StrEnum):
     FAILED = "failed"
     NEEDS_MANUAL_PUBLISH = "needs_manual_publish"  # Direct post not available, video stored locally
     AWAITING_APPROVAL = "awaiting_approval"  # Content under platform review
+
+
+class QAStatus(StrEnum):
+    """Status of QA validation for a video job."""
+
+    PENDING = "pending"  # QA not yet run
+    PASSED = "passed"  # QA checks passed
+    FAILED = "failed"  # QA failed, may retry
+    FAILED_QA = "failed_qa"  # QA failed, exhausted retries
+    SKIPPED = "skipped"  # QA was skipped (disabled or bypass)
+
+
+class QACheckType(StrEnum):
+    """Types of QA checks performed."""
+
+    PLAN_QA = "plan_qa"  # Post-planning QA
+    RENDER_QA = "render_qa"  # Post-render QA
+
+
+class QAStage(StrEnum):
+    """Pipeline stage where QA check was performed."""
+
+    POST_PLANNING = "post_planning"
+    POST_RENDER = "post_render"

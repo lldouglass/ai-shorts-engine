@@ -746,6 +746,7 @@ def run_publish_pipeline_task(
     """Run the full publish pipeline for multiple platforms.
 
     Supports both legacy single-platform parameters and new multi-destination format.
+    Respects the AUTOPUBLISH_ENABLED setting - if disabled, blocks automatic publishing.
 
     Args:
         video_job_id: UUID of the video job to publish.
@@ -760,6 +761,20 @@ def run_publish_pipeline_task(
     Returns:
         Dict with publish results for each platform.
     """
+    # Autopublish guard - block automatic publishing if disabled
+    if not settings.autopublish_enabled and not dry_run:
+        logger.warning(
+            "autopublish_blocked",
+            video_job_id=video_job_id,
+            reason="AUTOPUBLISH_ENABLED=false",
+        )
+        return {
+            "success": False,
+            "skipped": True,
+            "reason": "Autopublish disabled. Set AUTOPUBLISH_ENABLED=true to enable automatic publishing.",
+            "video_job_id": video_job_id,
+        }
+
     results = {}
 
     # Build destination list from both legacy and new format
