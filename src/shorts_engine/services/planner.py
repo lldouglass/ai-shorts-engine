@@ -1,0 +1,224 @@
+"""Video planning service using LLM providers."""
+
+import json
+from dataclasses import dataclass, field
+from typing import Any
+
+from shorts_engine.adapters.llm.base import LLMMessage, LLMProvider
+from shorts_engine.adapters.llm.openai import OpenAIProvider
+from shorts_engine.adapters.llm.anthropic import AnthropicProvider
+from shorts_engine.adapters.llm.stub import StubLLMProvider
+from shorts_engine.config import settings
+from shorts_engine.logging import get_logger
+from shorts_engine.presets.styles import StylePreset, get_preset
+
+logger = get_logger(__name__)
+
+
+@dataclass
+class ScenePlan:
+    """Plan for a single scene in a video."""
+
+    scene_number: int
+    visual_prompt: str
+    continuity_notes: str
+    caption_beat: str
+    duration_seconds: float = 5.0
+
+
+@dataclass
+class VideoPlan:
+    """Complete plan for a video."""
+
+    title: str
+    description: str
+    scenes: list[ScenePlan]
+    style_preset: str
+    total_duration: float = field(init=False)
+    raw_response: dict[str, Any] | None = None
+
+    def __post_init__(self) -> None:
+        self.total_duration = sum(s.duration_seconds for s in self.scenes)
+
+
+class PlannerService:
+    """Service for generating video plans using LLM.
+
+    The planner takes a one-paragraph idea and a style preset,
+    then generates a structured plan with 7-8 scenes.
+    """
+
+    SYSTEM_PROMPT = """You are an expert short-form video director and scriptwriter.
+Your task is to create compelling 60-second video plans for vertical short-form content (TikTok, YouTube Shorts, Instagram Reels).
+
+You will receive:
+1. A one-paragraph idea describing the video concept
+2. A style preset with visual tokens and aesthetic guidelines
+
+You must output a JSON object with this exact structure:
+{
+    "title": "Catchy title under 60 characters",
+    "description": "SEO-optimized description, 2-3 sentences",
+    "scenes": [
+        {
+            "scene_number": 1,
+            "visual_prompt": "Detailed visual description for AI video generation (5-8 seconds of footage). Include camera movement, lighting, subject details.",
+            "continuity_notes": "Notes for maintaining visual consistency with other scenes (character appearance, color grading, style tokens)",
+            "caption_beat": "2-6 word caption/hook for this moment",
+            "duration_seconds": 5.0
+        }
+        // ... 7-8 scenes total, totaling ~60 seconds
+    ]
+}
+
+Guidelines:
+- Create 7-8 scenes that tell a complete micro-story
+- Each scene should be 5-8 seconds
+- Total duration should be approximately 60 seconds
+- Visual prompts should be specific and detailed for AI video generation
+- Continuity notes should ensure consistent character/style across scenes
+- Caption beats should be punchy hooks that work as on-screen text
+- Incorporate the style tokens naturally into visual prompts
+- Build tension/interest with a clear arc: hook -> develop -> climax -> resolve"""
+
+    def __init__(
+        self,
+        llm_provider: LLMProvider | None = None,
+        default_provider: str = "openai",
+    ) -> None:
+        """Initialize the planner with an LLM provider.
+
+        Args:
+            llm_provider: Optional LLM provider. If None, auto-selects based on config.
+            default_provider: Default provider type if no API keys configured ("openai", "anthropic", "stub")
+        """
+        self.llm = llm_provider or self._get_default_provider(default_provider)
+        logger.info("planner_initialized", provider=self.llm.name)
+
+    def _get_default_provider(self, default: str) -> LLMProvider:
+        """Get the default LLM provider based on available API keys."""
+        # Check for API keys in order of preference
+        if settings.openai_api_key:
+            return OpenAIProvider()
+        if hasattr(settings, "anthropic_api_key") and settings.anthropic_api_key:
+            return AnthropicProvider()
+
+        # Fall back to specified default or stub
+        if default == "anthropic":
+            return AnthropicProvider()
+        elif default == "openai":
+            return OpenAIProvider()
+        else:
+            logger.warning("No LLM API keys configured, using stub provider")
+            return StubLLMProvider()
+
+    def _build_user_prompt(self, idea: str, preset: StylePreset) -> str:
+        """Build the user prompt with idea and style context."""
+        return f"""Create a video plan for the following concept:
+
+## Video Idea
+{idea}
+
+## Style Preset: {preset.display_name}
+{preset.description}
+
+### Visual Style Tokens (incorporate into every scene):
+{preset.format_style_prompt()}
+
+### Continuity Tokens (use in continuity_notes):
+{preset.format_continuity_prompt()}
+
+### Negative Prompts (avoid these):
+{preset.format_negative_prompt()}
+
+### Camera Style:
+{preset.camera_style}
+
+### Target Duration Per Scene:
+{preset.default_duration_per_scene} seconds
+
+Generate a compelling 7-8 scene video plan that brings this idea to life in the {preset.display_name} style."""
+
+    async def plan(self, idea: str, style_preset_name: str) -> VideoPlan:
+        """Generate a video plan from an idea and style preset.
+
+        Args:
+            idea: One-paragraph description of the video concept
+            style_preset_name: Name of the style preset to use
+
+        Returns:
+            VideoPlan with title, description, and scenes
+
+        Raises:
+            ValueError: If preset not found or LLM returns invalid response
+        """
+        # Get the style preset
+        preset = get_preset(style_preset_name)
+        if not preset:
+            available = ", ".join(get_preset(name).name for name in ["DARK_DYSTOPIAN_ANIME", "VIBRANT_MOTION_GRAPHICS", "CINEMATIC_REALISM"])
+            raise ValueError(f"Unknown style preset: {style_preset_name}. Available: {available}")
+
+        logger.info(
+            "planning_video",
+            idea_length=len(idea),
+            style_preset=preset.name,
+            llm_provider=self.llm.name,
+        )
+
+        # Build messages
+        messages = [
+            LLMMessage(role="system", content=self.SYSTEM_PROMPT),
+            LLMMessage(role="user", content=self._build_user_prompt(idea, preset)),
+        ]
+
+        # Get LLM response
+        response = await self.llm.complete(
+            messages=messages,
+            temperature=0.8,  # Some creativity
+            max_tokens=4096,
+            json_mode=True,
+        )
+
+        # Parse JSON response
+        try:
+            data = json.loads(response.content)
+        except json.JSONDecodeError as e:
+            logger.error("planner_json_parse_error", error=str(e), content=response.content[:500])
+            raise ValueError(f"LLM returned invalid JSON: {e}")
+
+        # Validate and build VideoPlan
+        if "scenes" not in data or not data["scenes"]:
+            raise ValueError("LLM response missing scenes")
+
+        scenes = []
+        for i, scene_data in enumerate(data["scenes"]):
+            scenes.append(
+                ScenePlan(
+                    scene_number=scene_data.get("scene_number", i + 1),
+                    visual_prompt=scene_data.get("visual_prompt", ""),
+                    continuity_notes=scene_data.get("continuity_notes", preset.format_continuity_prompt()),
+                    caption_beat=scene_data.get("caption_beat", ""),
+                    duration_seconds=float(scene_data.get("duration_seconds", preset.default_duration_per_scene)),
+                )
+            )
+
+        plan = VideoPlan(
+            title=data.get("title", "Untitled Video"),
+            description=data.get("description", ""),
+            scenes=scenes,
+            style_preset=preset.name,
+            raw_response=data,
+        )
+
+        logger.info(
+            "video_planned",
+            title=plan.title,
+            scene_count=len(plan.scenes),
+            total_duration=plan.total_duration,
+        )
+
+        return plan
+
+    async def health_check(self) -> bool:
+        """Check if the planner's LLM provider is healthy."""
+        return await self.llm.health_check()

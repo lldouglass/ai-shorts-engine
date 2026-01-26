@@ -1,0 +1,98 @@
+version: "3.9"
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: shorts-postgres
+    environment:
+      POSTGRES_USER: shorts
+      POSTGRES_PASSWORD: shorts
+      POSTGRES_DB: shorts
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U shorts -d shorts"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    container_name: shorts-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: shorts-api
+    command: uvicorn shorts_engine.main:app --host 0.0.0.0 --port 8000 --reload
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./src:/app/src:ro
+    environment:
+      DATABASE_URL: postgresql://shorts:shorts@postgres:5432/shorts
+      REDIS_URL: redis://redis:6379/0
+      CELERY_BROKER_URL: redis://redis:6379/0
+      CELERY_RESULT_BACKEND: redis://redis:6379/0
+      LOG_LEVEL: INFO
+      LOG_FORMAT: json
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: shorts-worker
+    command: celery -A shorts_engine.worker worker --loglevel=info
+    volumes:
+      - ./src:/app/src:ro
+    environment:
+      DATABASE_URL: postgresql://shorts:shorts@postgres:5432/shorts
+      REDIS_URL: redis://redis:6379/0
+      CELERY_BROKER_URL: redis://redis:6379/0
+      CELERY_RESULT_BACKEND: redis://redis:6379/0
+      LOG_LEVEL: INFO
+      LOG_FORMAT: json
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  beat:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: shorts-beat
+    command: celery -A shorts_engine.worker beat --loglevel=info
+    volumes:
+      - ./src:/app/src:ro
+    environment:
+      DATABASE_URL: postgresql://shorts:shorts@postgres:5432/shorts
+      REDIS_URL: redis://redis:6379/0
+      CELERY_BROKER_URL: redis://redis:6379/0
+      CELERY_RESULT_BACKEND: redis://redis:6379/0
+      LOG_LEVEL: INFO
+      LOG_FORMAT: json
+    depends_on:
+      - worker
+
+volumes:
+  postgres_data:
+  redis_data:
