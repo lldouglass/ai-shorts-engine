@@ -6,7 +6,6 @@ from uuid import UUID
 from fastapi import APIRouter, HTTPException, status
 from pydantic import BaseModel, Field
 
-from shorts_engine.db.models import PlatformAccountModel
 from shorts_engine.db.session import get_session_context
 from shorts_engine.logging import get_logger
 from shorts_engine.services.accounts import (

@@ -3,11 +3,12 @@
 Uses Meta Graph API for Instagram Professional accounts (Business or Creator).
 """
 
+import contextlib
 import logging
 import os
 import secrets
 from dataclasses import dataclass
-from http.server import HTTPServer, BaseHTTPRequestHandler
+from http.server import BaseHTTPRequestHandler, HTTPServer
 from typing import Any
 from urllib.parse import parse_qs, urlencode, urlparse
 
@@ -126,7 +127,7 @@ class InstagramCallbackAuth:
         outer = self
 
         class CallbackHandler(BaseHTTPRequestHandler):
-            def do_GET(self):
+            def do_GET(self) -> None:
                 parsed = urlparse(self.path)
 
                 # Only handle the callback path
@@ -171,7 +172,7 @@ class InstagramCallbackAuth:
                 self.send_response(404)
                 self.end_headers()
 
-            def log_message(self, format, *args):
+            def log_message(self, format: str, *args: object) -> None:
                 # Suppress HTTP server logs
                 pass
 
@@ -228,7 +229,9 @@ class InstagramCallbackAuth:
         )
 
         if long_response.status_code != 200:
-            logger.warning(f"Failed to get long-lived token, using short-lived: {long_response.text}")
+            logger.warning(
+                f"Failed to get long-lived token, using short-lived: {long_response.text}"
+            )
             access_token = short_lived_token
             expires_in = data.get("expires_in")
         else:
@@ -273,7 +276,9 @@ class InstagramCallbackAuth:
         pages = pages_data.get("data", [])
 
         if not pages:
-            logger.warning("No Facebook Pages found. Instagram Business account requires a linked Page.")
+            logger.warning(
+                "No Facebook Pages found. Instagram Business account requires a linked Page."
+            )
             return {}
 
         # Find first page with Instagram account
@@ -331,7 +336,7 @@ def refresh_instagram_token(access_token: str) -> dict[str, Any]:
 
         raise InstagramOAuthError(f"Token refresh failed: {error_msg}")
 
-    return response.json()
+    return response.json()  # type: ignore[no-any-return]
 
 
 def run_instagram_oauth_flow(port: int = 8085) -> InstagramOAuthCredentials:
@@ -354,14 +359,12 @@ def run_instagram_oauth_flow(port: int = 8085) -> InstagramOAuthCredentials:
     # Generate authorization URL
     auth_url, state = auth.get_authorization_url()
 
-    print(f"\nOpening browser for Instagram authorization via Facebook Login...")
+    print("\nOpening browser for Instagram authorization via Facebook Login...")
     print(f"If the browser doesn't open, go to:\n{auth_url}\n")
 
     # Open browser
-    try:
+    with contextlib.suppress(Exception):
         webbrowser.open(auth_url)
-    except Exception:
-        pass
 
     # Start callback server and wait for code
     print(f"Waiting for callback on port {port}...")

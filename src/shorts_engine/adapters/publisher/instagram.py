@@ -5,19 +5,17 @@ Handles video uploads for Instagram Reels via the Content Publishing API.
 
 import asyncio
 import logging
-import time
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
-from uuid import UUID
 
 import httpx
 
 from shorts_engine.adapters.publisher.base import (
+    PublisherAdapter,
     PublishRequest,
     PublishResponse,
-    PublisherAdapter,
 )
 from shorts_engine.adapters.publisher.instagram_oauth import (
     InstagramOAuthError,
@@ -38,7 +36,7 @@ MAX_HASHTAGS = 30
 ASPECT_RATIO_REELS = "9:16"
 
 # Import account state from domain to avoid circular imports
-from shorts_engine.domain.account_state import InstagramAccountState
+from shorts_engine.domain.account_state import InstagramAccountState  # noqa: E402
 
 
 @dataclass
@@ -106,7 +104,7 @@ class InstagramPublisher(PublisherAdapter):
             raise InstagramOAuthError("No account credentials configured")
 
         # Check if token needs refresh (7 days before expiry)
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         if (
             self.account_state.token_expires_at
             and self.account_state.token_expires_at > now + timedelta(days=7)
@@ -135,18 +133,15 @@ class InstagramPublisher(PublisherAdapter):
         if not self.account_state:
             return
 
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
 
         # Reset counter if it's a new day
-        if (
-            self.account_state.posts_reset_at is None
-            or self.account_state.posts_reset_at < now
-        ):
+        if self.account_state.posts_reset_at is None or self.account_state.posts_reset_at < now:
             self.account_state.posts_today = 0
             # Reset at midnight UTC
             tomorrow = now.date() + timedelta(days=1)
             self.account_state.posts_reset_at = datetime(
-                tomorrow.year, tomorrow.month, tomorrow.day, tzinfo=timezone.utc
+                tomorrow.year, tomorrow.month, tomorrow.day, tzinfo=UTC
             )
 
         if self.account_state.posts_today >= self.account_state.max_posts_per_day:
@@ -465,7 +460,7 @@ class InstagramPublisher(PublisherAdapter):
 
         if response.status_code == 200:
             data = response.json()
-            return data.get("permalink")
+            return str(data.get("permalink")) if data.get("permalink") else None
 
         return None
 
@@ -473,13 +468,13 @@ class InstagramPublisher(PublisherAdapter):
         """Extract error message from API response."""
         if data:
             error = data.get("error", {})
-            return error.get("message", fallback)
+            return error.get("message", fallback)  # type: ignore[no-any-return]
         return fallback
 
     def _safe_json(self, response: httpx.Response) -> dict[str, Any] | None:
         """Safely parse JSON response."""
         try:
-            return response.json()
+            return response.json()  # type: ignore[no-any-return]
         except Exception:
             return None
 
@@ -489,7 +484,7 @@ class InstagramPublisher(PublisherAdapter):
             return {
                 "id": platform_video_id,
                 "media_type": "REELS",
-                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "timestamp": datetime.now(UTC).isoformat(),
                 "dry_run": True,
             }
 
@@ -507,7 +502,7 @@ class InstagramPublisher(PublisherAdapter):
         if response.status_code != 200:
             raise ValueError(f"Failed to get media status: {response.text}")
 
-        return response.json()
+        return response.json()  # type: ignore[no-any-return]
 
     async def delete_video(self, platform_video_id: str) -> bool:
         """Delete a video from Instagram.

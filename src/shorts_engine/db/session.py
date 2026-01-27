@@ -3,7 +3,7 @@
 from collections.abc import Generator
 from contextlib import contextmanager
 
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, text
 from sqlalchemy.orm import Session, sessionmaker
 
 from shorts_engine.config import settings
@@ -49,8 +49,7 @@ def get_session_context() -> Generator[Session, None, None]:
 
 def init_db() -> None:
     """Initialize database connection and verify connectivity."""
-    from shorts_engine.db.models import Base
 
     # Just verify we can connect
     with engine.connect() as conn:
-        conn.execute("SELECT 1")
+        conn.execute(text("SELECT 1"))

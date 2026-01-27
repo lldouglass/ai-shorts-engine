@@ -69,7 +69,7 @@ class StubAnalyticsAdapter(AnalyticsAdapter):
         while current_date <= end_date:
             # Simulate viral decay pattern
             days_since_start = (current_date - start_date).days
-            decay_factor = 0.7 ** days_since_start
+            decay_factor = 0.7**days_since_start
             daily_views = int(random.randint(500, 5000) * decay_factor)
             cumulative_views += daily_views
 
@@ -88,9 +88,11 @@ class StubAnalyticsAdapter(AnalyticsAdapter):
                     shares=shares,
                     watch_time_seconds=int(cumulative_views * random.uniform(20, 50)),
                     avg_view_duration_seconds=random.uniform(15, 45),
-                    engagement_rate=(likes + comments + shares) / cumulative_views
-                    if cumulative_views > 0
-                    else 0,
+                    engagement_rate=(
+                        (likes + comments + shares) / cumulative_views
+                        if cumulative_views > 0
+                        else 0
+                    ),
                     raw_data={"source": "stub", "date": current_date.isoformat()},
                 )
             )

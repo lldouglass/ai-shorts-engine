@@ -2,21 +2,20 @@
 
 import asyncio
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
-from typing import Any
+from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
 import httpx
 
 from shorts_engine.adapters.analytics.base import AnalyticsAdapter, MetricsSnapshot
-from shorts_engine.adapters.publisher.youtube_oauth import refresh_access_token, OAuthError
+from shorts_engine.adapters.publisher.youtube_oauth import OAuthError, refresh_access_token
 from shorts_engine.db.session import get_session_context
 from shorts_engine.domain.enums import Platform
 from shorts_engine.logging import get_logger
 from shorts_engine.services.accounts import (
     get_account_state,
-    update_account_tokens,
     mark_account_revoked,
+    update_account_tokens,
 )
 
 logger = get_logger(__name__)
@@ -76,22 +75,24 @@ class YouTubeAnalyticsAdapter(AnalyticsAdapter):
             account_state = get_account_state(session, self.account_id)
 
             # Check if token needs refresh (5 min buffer)
-            if account_state.token_expires_at:
-                if account_state.token_expires_at < datetime.now(timezone.utc) + timedelta(minutes=5):
-                    logger.debug("youtube_token_refresh", account_id=str(self.account_id))
-                    try:
-                        token_data = refresh_access_token(account_state.refresh_token)
-                        new_expires = datetime.now(timezone.utc) + timedelta(
-                            seconds=token_data["expires_in"]
-                        )
-                        update_account_tokens(
-                            session, self.account_id, token_data["access_token"], new_expires
-                        )
-                        return token_data["access_token"]
-                    except OAuthError as e:
-                        if "invalid_grant" in str(e):
-                            mark_account_revoked(session, self.account_id, str(e))
-                        raise
+            if (
+                account_state.token_expires_at
+                and account_state.token_expires_at < datetime.now(UTC) + timedelta(minutes=5)
+            ):
+                logger.debug("youtube_token_refresh", account_id=str(self.account_id))
+                try:
+                    token_data = refresh_access_token(account_state.refresh_token)
+                    new_expires = datetime.now(UTC) + timedelta(
+                        seconds=token_data["expires_in"]
+                    )
+                    update_account_tokens(
+                        session, self.account_id, token_data["access_token"], new_expires
+                    )
+                    return str(token_data["access_token"])
+                except OAuthError as e:
+                    if "invalid_grant" in str(e):
+                        mark_account_revoked(session, self.account_id, str(e))
+                    raise
 
             return account_state.access_token
 
@@ -139,7 +140,7 @@ class YouTubeAnalyticsAdapter(AnalyticsAdapter):
         return MetricsSnapshot(
             platform=self.platform,
             platform_video_id=platform_video_id,
-            fetched_at=datetime.now(timezone.utc),
+            fetched_at=datetime.now(UTC),
             views=views,
             likes=likes,
             comments_count=comments,
@@ -211,7 +212,7 @@ class YouTubeAnalyticsAdapter(AnalyticsAdapter):
         return MetricsSnapshot(
             platform=self.platform,
             platform_video_id=platform_video_id,
-            fetched_at=datetime.now(timezone.utc),
+            fetched_at=datetime.now(UTC),
             views=int(views),
             likes=int(likes),
             comments_count=int(comments),
@@ -242,7 +243,7 @@ class YouTubeAnalyticsAdapter(AnalyticsAdapter):
         Returns:
             List of WindowedMetrics for completed windows.
         """
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         windows = []
 
         # Define window types relative to publish time
@@ -338,7 +339,7 @@ class YouTubeAnalyticsAdapter(AnalyticsAdapter):
             client = await self._get_client()
 
             # Use a minimal query to check access
-            yesterday = datetime.now(timezone.utc) - timedelta(days=1)
+            yesterday = datetime.now(UTC) - timedelta(days=1)
             response = await client.get(
                 YOUTUBE_ANALYTICS_URL,
                 params={

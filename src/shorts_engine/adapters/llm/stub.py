@@ -1,7 +1,6 @@
 """Stub LLM provider for testing."""
 
 import json
-from uuid import uuid4
 
 from shorts_engine.adapters.llm.base import LLMMessage, LLMProvider, LLMResponse
 from shorts_engine.logging import get_logger
@@ -19,8 +18,8 @@ class StubLLMProvider(LLMProvider):
     async def complete(
         self,
         messages: list[LLMMessage],
-        temperature: float = 0.7,
-        max_tokens: int = 4096,
+        _temperature: float = 0.7,
+        _max_tokens: int = 4096,
         json_mode: bool = False,
     ) -> LLMResponse:
         """Return a mock completion response."""
@@ -49,7 +48,16 @@ class StubLLMProvider(LLMProvider):
                             "scene_number": i + 1,
                             "visual_prompt": f"Scene {i + 1}: {['Opening shot establishing mood', 'Character introduction with dramatic lighting', 'Action sequence with dynamic camera movement', 'Emotional close-up moment', 'Plot twist reveal', 'Climactic confrontation', 'Resolution and reflection', 'Final powerful image'][i % 8]}",
                             "continuity_notes": "Maintain consistent character design, lighting direction from left, color palette with deep shadows",
-                            "caption_beat": ["The beginning", "Enter the hero", "Chaos unfolds", "A moment of truth", "Everything changes", "The final stand", "Peace returns", "Remember this"][i % 8],
+                            "caption_beat": [
+                                "The beginning",
+                                "Enter the hero",
+                                "Chaos unfolds",
+                                "A moment of truth",
+                                "Everything changes",
+                                "The final stand",
+                                "Peace returns",
+                                "Remember this",
+                            ][i % 8],
                             "duration_seconds": 5.0 + (i % 3),
                         }
                         for i in range(7)

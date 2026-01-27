@@ -67,7 +67,7 @@ class CreatomateProvider(RendererProvider):
     def name(self) -> str:
         return "creatomate"
 
-    async def render(self, request: RenderRequest) -> RenderResult:
+    async def render(self, _request: RenderRequest) -> RenderResult:
         """Render using basic RenderRequest (legacy interface)."""
         # This is a simplified version - use render_composition for full features
         return RenderResult(
@@ -215,24 +215,28 @@ class CreatomateProvider(RendererProvider):
 
         # Voiceover track
         if request.voiceover_url:
-            audio_elements.append({
-                "type": "audio",
-                "source": request.voiceover_url,
-                "time": 0,
-                "duration": total_duration,
-                "volume": "100%",
-            })
+            audio_elements.append(
+                {
+                    "type": "audio",
+                    "source": request.voiceover_url,
+                    "time": 0,
+                    "duration": total_duration,
+                    "volume": "100%",
+                }
+            )
 
         # Background music (lower volume)
         if request.background_music_url:
-            audio_elements.append({
-                "type": "audio",
-                "source": request.background_music_url,
-                "time": 0,
-                "duration": total_duration,
-                "volume": f"{int(request.background_music_volume * 100)}%",
-                "audio_fade_out": 2.0,
-            })
+            audio_elements.append(
+                {
+                    "type": "audio",
+                    "source": request.background_music_url,
+                    "time": 0,
+                    "duration": total_duration,
+                    "volume": f"{int(request.background_music_volume * 100)}%",
+                    "audio_fade_out": 2.0,
+                }
+            )
 
         elements.extend(audio_elements)
 
@@ -366,7 +370,7 @@ class CreatomateProvider(RendererProvider):
                     headers=headers,
                 )
                 response.raise_for_status()
-                return response.json()
+                return response.json()  # type: ignore[no-any-return]
         except Exception as e:
             return {"error": str(e)}
 

@@ -4,34 +4,22 @@ Handles connecting, storing, and managing platform accounts (YouTube, TikTok, et
 """
 
 import logging
-from datetime import datetime, timedelta, timezone
-from typing import Any
+from datetime import UTC, datetime, timedelta
 from uuid import UUID, uuid4
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-# Import account states from domain to avoid circular imports
-from shorts_engine.domain.account_state import (
-    YouTubeAccountState,
-    InstagramAccountState,
-    TikTokAccountState,
-)
-from shorts_engine.adapters.publisher.youtube_oauth import (
-    OAuthCredentials,
-    OAuthError,
-    refresh_access_token,
-    run_device_flow,
-    run_local_callback_flow,
-)
 from shorts_engine.adapters.publisher.instagram_oauth import (
-    InstagramOAuthError,
     run_instagram_oauth_flow,
 )
 from shorts_engine.adapters.publisher.tiktok_oauth import (
-    TikTokOAuthError,
     check_direct_post_capability,
     run_tiktok_oauth_flow,
+)
+from shorts_engine.adapters.publisher.youtube_oauth import (
+    run_device_flow,
+    run_local_callback_flow,
 )
 from shorts_engine.config import settings
 from shorts_engine.db.models import (
@@ -39,7 +27,14 @@ from shorts_engine.db.models import (
     PlatformAccountModel,
     ProjectModel,
 )
-from shorts_engine.services.encryption import decrypt_token, encrypt_token, EncryptionError
+
+# Import account states from domain to avoid circular imports
+from shorts_engine.domain.account_state import (
+    InstagramAccountState,
+    TikTokAccountState,
+    YouTubeAccountState,
+)
+from shorts_engine.services.encryption import EncryptionError, decrypt_token, encrypt_token
 
 logger = logging.getLogger(__name__)
 
@@ -90,10 +85,7 @@ def connect_youtube_account(
         )
 
     # Run OAuth flow
-    if use_device_flow:
-        credentials = run_device_flow()
-    else:
-        credentials = run_local_callback_flow()
+    credentials = run_device_flow() if use_device_flow else run_local_callback_flow()
 
     # Create account record
     account = PlatformAccountModel(
@@ -104,12 +96,12 @@ def connect_youtube_account(
         external_name=credentials.channel_title,
         encrypted_refresh_token=encrypt_token(credentials.refresh_token),
         encrypted_access_token=encrypt_token(credentials.access_token),
-        token_expires_at=datetime.now(timezone.utc) + timedelta(seconds=credentials.expires_in),
+        token_expires_at=datetime.now(UTC) + timedelta(seconds=credentials.expires_in),
         scopes=credentials.scope,
         status="active",
         uploads_today=0,
         metadata_={
-            "connected_at": datetime.now(timezone.utc).isoformat(),
+            "connected_at": datetime.now(UTC).isoformat(),
         },
     )
 
@@ -293,15 +285,19 @@ def _clear_default_accounts(
 ) -> None:
     """Clear default status for all accounts of a platform for a project."""
     # Get all links for this project
-    links = session.execute(
-        select(AccountProjectModel)
-        .join(PlatformAccountModel)
-        .where(
-            AccountProjectModel.project_id == project_id,
-            PlatformAccountModel.platform == platform,
-            AccountProjectModel.is_default == True,
+    links = (
+        session.execute(
+            select(AccountProjectModel)
+            .join(PlatformAccountModel)
+            .where(
+                AccountProjectModel.project_id == project_id,
+                PlatformAccountModel.platform == platform,
+                AccountProjectModel.is_default == True,  # noqa: E712 - SQLAlchemy requires ==
+            )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
 
     for link in links:
         link.is_default = False
@@ -336,16 +332,13 @@ def get_account_state(
 
     if not account.encrypted_refresh_token:
         raise AccountError(
-            f"Account '{account.label}' has no refresh token. "
-            "Please reconnect the account."
+            f"Account '{account.label}' has no refresh token. " "Please reconnect the account."
         )
 
     try:
         refresh_token = decrypt_token(account.encrypted_refresh_token)
         access_token = (
-            decrypt_token(account.encrypted_access_token)
-            if account.encrypted_access_token
-            else ""
+            decrypt_token(account.encrypted_access_token) if account.encrypted_access_token else ""
         )
     except EncryptionError as e:
         raise AccountError(f"Failed to decrypt tokens: {e}")
@@ -394,7 +387,7 @@ def increment_upload_count(
         account_id: Account UUID.
     """
     account = get_account_by_id(session, account_id)
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
 
     # Reset counter if new day
     if account.uploads_reset_at is None or account.uploads_reset_at < now:
@@ -402,7 +395,7 @@ def increment_upload_count(
         # Reset at midnight UTC
         tomorrow = now.date() + timedelta(days=1)
         account.uploads_reset_at = datetime(
-            tomorrow.year, tomorrow.month, tomorrow.day, tzinfo=timezone.utc
+            tomorrow.year, tomorrow.month, tomorrow.day, tzinfo=UTC
         )
 
     account.uploads_today = (account.uploads_today or 0) + 1
@@ -423,7 +416,7 @@ def check_upload_limit(
         Tuple of (can_upload, uploads_today, max_uploads).
     """
     account = get_account_by_id(session, account_id)
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
 
     uploads_today = account.uploads_today or 0
     max_uploads = settings.youtube_max_uploads_per_day
@@ -452,7 +445,7 @@ def mark_account_revoked(
     account = get_account_by_id(session, account_id)
     account.status = "revoked"
     account.metadata_ = account.metadata_ or {}
-    account.metadata_["revoked_at"] = datetime.now(timezone.utc).isoformat()
+    account.metadata_["revoked_at"] = datetime.now(UTC).isoformat()
     if reason:
         account.metadata_["revoke_reason"] = reason
     session.commit()
@@ -504,7 +497,7 @@ def connect_instagram_account(
         encrypted_refresh_token=None,  # Instagram uses long-lived tokens
         encrypted_access_token=encrypt_token(credentials.access_token),
         token_expires_at=(
-            datetime.now(timezone.utc) + timedelta(seconds=credentials.expires_in)
+            datetime.now(UTC) + timedelta(seconds=credentials.expires_in)
             if credentials.expires_in
             else None
         ),
@@ -513,7 +506,7 @@ def connect_instagram_account(
         uploads_today=0,
         capabilities={"direct_post": True},  # Instagram always supports direct post via API
         metadata_={
-            "connected_at": datetime.now(timezone.utc).isoformat(),
+            "connected_at": datetime.now(UTC).isoformat(),
             "facebook_page_id": credentials.facebook_page_id,
         },
     )
@@ -579,15 +572,17 @@ def connect_tiktok_account(
         external_name=credentials.display_name,
         encrypted_refresh_token=encrypt_token(credentials.refresh_token),
         encrypted_access_token=encrypt_token(credentials.access_token),
-        token_expires_at=datetime.now(timezone.utc) + timedelta(seconds=credentials.expires_in),
+        token_expires_at=datetime.now(UTC) + timedelta(seconds=credentials.expires_in),
         scopes=credentials.scope,
         status="active",
         uploads_today=0,
         capabilities={"direct_post": has_direct_post},
         metadata_={
-            "connected_at": datetime.now(timezone.utc).isoformat(),
+            "connected_at": datetime.now(UTC).isoformat(),
             "open_id": credentials.open_id,
-            "refresh_token": encrypt_token(credentials.refresh_token),  # Store for analytics adapters
+            "refresh_token": encrypt_token(
+                credentials.refresh_token
+            ),  # Store for analytics adapters
             "refresh_expires_in": credentials.refresh_expires_in,
         },
     )
@@ -635,14 +630,18 @@ def get_instagram_account_state(
 
     if not account.encrypted_access_token:
         raise AccountError(
-            f"Account '{account.label}' has no access token. "
-            "Please reconnect the account."
+            f"Account '{account.label}' has no access token. " "Please reconnect the account."
         )
 
     try:
         access_token = decrypt_token(account.encrypted_access_token)
     except EncryptionError as e:
         raise AccountError(f"Failed to decrypt tokens: {e}")
+
+    if not account.external_id:
+        raise AccountError(
+            f"Account '{account.label}' has no Instagram account ID. " "Please reconnect the account."
+        )
 
     return InstagramAccountState(
         account_id=account.id,
@@ -685,16 +684,13 @@ def get_tiktok_account_state(
 
     if not account.encrypted_refresh_token:
         raise AccountError(
-            f"Account '{account.label}' has no refresh token. "
-            "Please reconnect the account."
+            f"Account '{account.label}' has no refresh token. " "Please reconnect the account."
         )
 
     try:
         refresh_token = decrypt_token(account.encrypted_refresh_token)
         access_token = (
-            decrypt_token(account.encrypted_access_token)
-            if account.encrypted_access_token
-            else ""
+            decrypt_token(account.encrypted_access_token) if account.encrypted_access_token else ""
         )
     except EncryptionError as e:
         raise AccountError(f"Failed to decrypt tokens: {e}")

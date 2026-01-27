@@ -1,6 +1,5 @@
 """Tests for job endpoints (integration tests requiring Redis)."""
 
-import pytest
 from fastapi.testclient import TestClient
 
 

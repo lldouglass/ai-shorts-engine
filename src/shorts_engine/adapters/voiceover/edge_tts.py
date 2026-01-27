@@ -1,7 +1,5 @@
 """Microsoft Edge TTS voiceover provider (free fallback)."""
 
-import asyncio
-import io
 import tempfile
 from pathlib import Path
 from typing import Any
@@ -44,7 +42,7 @@ class EdgeTTSProvider(VoiceoverProvider):
         """Generate voiceover using Microsoft Edge TTS."""
         try:
             # Import edge_tts dynamically (optional dependency)
-            import edge_tts
+            import edge_tts  # type: ignore[import-not-found]
         except ImportError:
             return VoiceoverResult(
                 success=False,

@@ -6,19 +6,17 @@ Includes:
 - evaluate_experiments: Job to check experiment completion
 """
 
-from datetime import datetime, date, timedelta, timezone
+from datetime import UTC, date, datetime
 from typing import Any
 from uuid import UUID, uuid4
 
-from sqlalchemy import select, func
-from sqlalchemy.dialects.postgresql import insert as pg_insert
+from sqlalchemy import func, select
 
 from shorts_engine.db.models import (
+    ExperimentModel,
     PlannedBatchModel,
     ProjectModel,
-    RecipeModel,
     VideoJobModel,
-    ExperimentModel,
 )
 from shorts_engine.db.session import get_session_context
 from shorts_engine.domain.enums import BatchStatus, ExperimentStatus, GenerationMode
@@ -26,7 +24,6 @@ from shorts_engine.logging import get_logger
 from shorts_engine.services.learning.recipe import RecipeService
 from shorts_engine.services.learning.reward import RewardCalculator
 from shorts_engine.services.learning.sampler import RecipeSampler
-from shorts_engine.utils import run_async
 from shorts_engine.worker import celery_app
 
 logger = get_logger(__name__)
@@ -96,8 +93,7 @@ def plan_next_batch_task(
         # Check if batch already exists for today
         today = date.today()
         existing_batch = session.execute(
-            select(PlannedBatchModel)
-            .where(
+            select(PlannedBatchModel).where(
                 PlannedBatchModel.project_id == project_uuid,
                 func.date(PlannedBatchModel.batch_date) == today,
             )
@@ -131,17 +127,17 @@ def plan_next_batch_task(
             batch.exploit_count = exploit_count
             batch.explore_count = explore_count
             batch.status = BatchStatus.RUNNING
-            batch.started_at = datetime.now(timezone.utc)
+            batch.started_at = datetime.now(UTC)
         else:
             batch = PlannedBatchModel(
                 id=uuid4(),
                 project_id=project_uuid,
-                batch_date=datetime.now(timezone.utc),
+                batch_date=datetime.now(UTC),
                 total_jobs=len(sampled_jobs),
                 exploit_count=exploit_count,
                 explore_count=explore_count,
                 status=BatchStatus.RUNNING,
-                started_at=datetime.now(timezone.utc),
+                started_at=datetime.now(UTC),
             )
             session.add(batch)
             session.flush()
@@ -268,10 +264,10 @@ def update_recipe_stats_task(
     max_retries=2,
 )
 def evaluate_experiments_task(
-    self: Any,
+    self: Any,  # noqa: ARG001 - used for self.request.id
     project_id: str,
     min_samples: int = 5,
-    confidence_threshold: float = 0.95,
+    _confidence_threshold: float = 0.95,
 ) -> dict[str, Any]:
     """Evaluate running experiments and mark completed ones.
 
@@ -301,13 +297,16 @@ def evaluate_experiments_task(
 
     with get_session_context() as session:
         # Get running experiments
-        experiments = session.execute(
-            select(ExperimentModel)
-            .where(
-                ExperimentModel.project_id == project_uuid,
-                ExperimentModel.status == ExperimentStatus.RUNNING,
+        experiments = (
+            session.execute(
+                select(ExperimentModel).where(
+                    ExperimentModel.project_id == project_uuid,
+                    ExperimentModel.status == ExperimentStatus.RUNNING,
+                )
             )
-        ).scalars().all()
+            .scalars()
+            .all()
+        )
 
         evaluated = []
         completed = []
@@ -318,12 +317,8 @@ def evaluate_experiments_task(
                 continue
 
             # Calculate average rewards for baseline and variant videos
-            baseline_reward = _calculate_experiment_avg_reward(
-                session, exp.id, is_baseline=True
-            )
-            variant_reward = _calculate_experiment_avg_reward(
-                session, exp.id, is_baseline=False
-            )
+            baseline_reward = _calculate_experiment_avg_reward(session, exp.id, is_baseline=True)
+            variant_reward = _calculate_experiment_avg_reward(session, exp.id, is_baseline=False)
 
             if baseline_reward is None or variant_reward is None:
                 continue
@@ -342,21 +337,26 @@ def evaluate_experiments_task(
                 else:
                     exp.winner = "baseline"
                 exp.status = ExperimentStatus.COMPLETED
-                exp.completed_at = datetime.now(timezone.utc)
+                exp.completed_at = datetime.now(UTC)
                 exp.confidence = min(0.99, 0.9 + relative_diff * 0.1)  # Simplified confidence
-                completed.append({
-                    "id": str(exp.id),
-                    "variable": exp.variable_tested,
-                    "winner": exp.winner,
-                    "baseline_reward": baseline_reward,
-                    "variant_reward": variant_reward,
-                })
+                completed.append(
+                    {
+                        "id": str(exp.id),
+                        "variable": exp.variable_tested,
+                        "winner": exp.winner,
+                        "baseline_reward": baseline_reward,
+                        "variant_reward": variant_reward,
+                    }
+                )
             else:
                 # Check if we have enough samples to call it inconclusive
-                if exp.baseline_video_count >= min_samples * 2 and exp.variant_video_count >= min_samples * 2:
+                if (
+                    exp.baseline_video_count >= min_samples * 2
+                    and exp.variant_video_count >= min_samples * 2
+                ):
                     exp.status = ExperimentStatus.INCONCLUSIVE
                     exp.winner = "inconclusive"
-                    exp.completed_at = datetime.now(timezone.utc)
+                    exp.completed_at = datetime.now(UTC)
 
             evaluated.append(str(exp.id))
 
@@ -391,7 +391,7 @@ def _calculate_experiment_avg_reward(
     Returns:
         Average reward score or None
     """
-    from shorts_engine.db.models import VideoMetricsModel, PublishJobModel
+    from shorts_engine.db.models import PublishJobModel, VideoMetricsModel
 
     # For baseline, we need videos using the baseline recipe
     # For variant, we need videos with this experiment_id

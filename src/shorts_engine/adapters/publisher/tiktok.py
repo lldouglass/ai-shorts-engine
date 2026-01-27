@@ -6,20 +6,18 @@ NEEDS_MANUAL_PUBLISH status for accounts without Direct Post approval.
 
 import asyncio
 import logging
-import os
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlencode
-from uuid import UUID
 
 import httpx
 
 from shorts_engine.adapters.publisher.base import (
+    PublisherAdapter,
     PublishRequest,
     PublishResponse,
-    PublisherAdapter,
 )
 from shorts_engine.adapters.publisher.tiktok_oauth import (
     TikTokOAuthError,
@@ -43,7 +41,7 @@ MAX_TITLE_LENGTH = 150
 MAX_CHUNK_SIZE = 64 * 1024 * 1024  # 64 MB
 
 # Import account state from domain to avoid circular imports
-from shorts_engine.domain.account_state import TikTokAccountState
+from shorts_engine.domain.account_state import TikTokAccountState  # noqa: E402
 
 
 @dataclass
@@ -114,7 +112,7 @@ class TikTokPublisher(PublisherAdapter):
             raise TikTokOAuthError("No account credentials configured")
 
         # Check if token needs refresh (1 hour before expiry)
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         if (
             self.account_state.token_expires_at
             and self.account_state.token_expires_at > now + timedelta(hours=1)
@@ -146,18 +144,15 @@ class TikTokPublisher(PublisherAdapter):
         if not self.account_state:
             return
 
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
 
         # Reset counter if it's a new day
-        if (
-            self.account_state.posts_reset_at is None
-            or self.account_state.posts_reset_at < now
-        ):
+        if self.account_state.posts_reset_at is None or self.account_state.posts_reset_at < now:
             self.account_state.posts_today = 0
             # Reset at midnight UTC
             tomorrow = now.date() + timedelta(days=1)
             self.account_state.posts_reset_at = datetime(
-                tomorrow.year, tomorrow.month, tomorrow.day, tzinfo=timezone.utc
+                tomorrow.year, tomorrow.month, tomorrow.day, tzinfo=UTC
             )
 
         if self.account_state.posts_today >= self.account_state.max_posts_per_day:
@@ -215,7 +210,7 @@ class TikTokPublisher(PublisherAdapter):
         title = " | ".join(parts) if len(parts) > 1 else (parts[0] if parts else "")
         return title[:MAX_TITLE_LENGTH]
 
-    def _generate_share_url(self, video_path: Path, title: str) -> str:
+    def _generate_share_url(self, _video_path: Path, title: str) -> str:
         """Generate a TikTok Share Intent URL for manual publishing.
 
         Args:
@@ -502,13 +497,13 @@ class TikTokPublisher(PublisherAdapter):
         """Extract error message from API response."""
         if data:
             error = data.get("error", {})
-            return error.get("message", fallback)
+            return error.get("message", fallback)  # type: ignore[no-any-return]
         return fallback
 
     def _safe_json(self, response: httpx.Response) -> dict[str, Any] | None:
         """Safely parse JSON response."""
         try:
-            return response.json()
+            return response.json()  # type: ignore[no-any-return]
         except Exception:
             return None
 
@@ -536,7 +531,7 @@ class TikTokPublisher(PublisherAdapter):
         if response.status_code != 200:
             raise ValueError(f"Failed to get video status: {response.text}")
 
-        return response.json()
+        return response.json()  # type: ignore[no-any-return]
 
     async def delete_video(self, platform_video_id: str) -> bool:
         """Delete a video from TikTok.

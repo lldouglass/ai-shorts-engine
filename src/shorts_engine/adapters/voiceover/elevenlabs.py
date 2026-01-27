@@ -130,7 +130,9 @@ class ElevenLabsProvider(VoiceoverProvider):
             error_msg = f"ElevenLabs API error: {e.response.status_code}"
             try:
                 error_data = e.response.json()
-                error_msg = f"{error_msg} - {error_data.get('detail', {}).get('message', str(error_data))}"
+                error_msg = (
+                    f"{error_msg} - {error_data.get('detail', {}).get('message', str(error_data))}"
+                )
             except Exception:
                 pass
             logger.error("elevenlabs_api_error", error=error_msg)
@@ -155,7 +157,7 @@ class ElevenLabsProvider(VoiceoverProvider):
                 response.raise_for_status()
                 data = response.json()
 
-            return data.get("voices", [])
+            return data.get("voices", [])  # type: ignore[no-any-return]
         except Exception as e:
             logger.error("elevenlabs_list_voices_error", error=str(e))
             return []

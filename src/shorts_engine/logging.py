@@ -2,7 +2,7 @@
 
 import logging
 import sys
-from typing import Any
+from typing import Any, cast
 
 import structlog
 
@@ -12,6 +12,7 @@ from shorts_engine.config import settings
 def setup_logging() -> None:
     """Configure structured logging for the application."""
     # Determine processors based on format
+    renderer: structlog.processors.JSONRenderer | structlog.dev.ConsoleRenderer
     if settings.log_format == "json":
         renderer = structlog.processors.JSONRenderer()
     else:
@@ -59,4 +60,4 @@ def setup_logging() -> None:
 
 def get_logger(name: str) -> structlog.stdlib.BoundLogger:
     """Get a logger instance for a module."""
-    return structlog.get_logger(name)
+    return cast(structlog.stdlib.BoundLogger, structlog.get_logger(name))

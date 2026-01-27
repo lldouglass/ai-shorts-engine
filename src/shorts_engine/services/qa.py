@@ -8,13 +8,13 @@ from uuid import UUID
 
 from sqlalchemy.orm import Session
 
+from shorts_engine.adapters.llm.anthropic import AnthropicProvider
 from shorts_engine.adapters.llm.base import LLMMessage, LLMProvider
 from shorts_engine.adapters.llm.openai import OpenAIProvider
-from shorts_engine.adapters.llm.anthropic import AnthropicProvider
 from shorts_engine.adapters.llm.stub import StubLLMProvider
 from shorts_engine.config import settings
-from shorts_engine.db.models import QAResultModel, VideoJobModel, SceneModel
-from shorts_engine.domain.enums import QACheckType, QAStage, QAStatus
+from shorts_engine.db.models import QAResultModel, VideoJobModel
+from shorts_engine.domain.enums import QACheckType, QAStage
 from shorts_engine.logging import get_logger
 
 logger = get_logger(__name__)
@@ -286,13 +286,19 @@ Scenes:
         if eval_data.get("feedback"):
             feedback_parts.append(eval_data["feedback"])
         if hook_clarity < settings.qa_hook_clarity_threshold:
-            feedback_parts.append(f"Hook clarity too low ({hook_clarity:.2f} < {settings.qa_hook_clarity_threshold})")
+            feedback_parts.append(
+                f"Hook clarity too low ({hook_clarity:.2f} < {settings.qa_hook_clarity_threshold})"
+            )
         if coherence < settings.qa_coherence_threshold:
-            feedback_parts.append(f"Coherence too low ({coherence:.2f} < {settings.qa_coherence_threshold})")
+            feedback_parts.append(
+                f"Coherence too low ({coherence:.2f} < {settings.qa_coherence_threshold})"
+            )
         if not policy_passed:
             feedback_parts.append(f"Policy violations: {', '.join(policy_violations)}")
         if similarity_score >= settings.qa_uniqueness_similarity_threshold:
-            feedback_parts.append(f"Too similar to existing content ({similarity_score:.2f} similarity)")
+            feedback_parts.append(
+                f"Too similar to existing content ({similarity_score:.2f} similarity)"
+            )
 
         duration = time.time() - start_time
         result = QAResult(
@@ -325,7 +331,7 @@ Scenes:
     async def check_render(
         self,
         video_job: VideoJobModel,
-        session: Session,
+        _session: Session,
     ) -> QAResult:
         """Run QA checks after rendering (final script validation).
 

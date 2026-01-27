@@ -8,10 +8,9 @@ replaced with a full implementation.
 """
 
 from datetime import datetime
-from typing import Any
 from uuid import UUID
 
-from shorts_engine.adapters.comments.base import CommentsAdapter, CommentData
+from shorts_engine.adapters.comments.base import CommentData, CommentsAdapter
 from shorts_engine.domain.enums import Platform
 from shorts_engine.logging import get_logger
 
@@ -40,9 +39,9 @@ class TikTokCommentsAdapter(CommentsAdapter):
 
     async def fetch_comments(
         self,
-        platform_video_id: str,
-        max_results: int = 100,
-        since: datetime | None = None,
+        platform_video_id: str,  # noqa: ARG002
+        max_results: int = 100,  # noqa: ARG002
+        since: datetime | None = None,  # noqa: ARG002
     ) -> list[CommentData]:
         """Fetch comments for a TikTok video.
 
@@ -68,7 +67,7 @@ class TikTokCommentsAdapter(CommentsAdapter):
         self,
         platform_video_id: str,
         platform_comment_id: str,
-        text: str,
+        _text: str,
     ) -> CommentData | None:
         """Reply to a TikTok comment.
 

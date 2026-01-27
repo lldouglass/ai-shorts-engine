@@ -13,28 +13,26 @@ Safeguards:
 import hashlib
 import random
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
 from typing import Any
 from uuid import UUID, uuid4
 
-from sqlalchemy import select, func
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from shorts_engine.db.models import (
     ExperimentModel,
-    RecipeModel,
     VideoJobModel,
 )
 from shorts_engine.domain.enums import (
+    CaptionDensityBucket,
+    EndingType,
+    ExperimentStatus,
     GenerationMode,
     HookType,
-    EndingType,
     NarrationWPMBucket,
-    CaptionDensityBucket,
-    ExperimentStatus,
 )
-from shorts_engine.services.learning.recipe import Recipe, RecipeService
 from shorts_engine.logging import get_logger
+from shorts_engine.services.learning.recipe import Recipe, RecipeService
 
 logger = get_logger(__name__)
 
@@ -131,13 +129,12 @@ class RecipeSampler:
             True if this combination was already used
         """
         existing = self.session.execute(
-            select(func.count(VideoJobModel.id))
-            .where(
+            select(func.count(VideoJobModel.id)).where(
                 VideoJobModel.project_id == self.project_id,
                 VideoJobModel.topic_hash == topic_hash,
             )
         ).scalar()
-        return existing > 0
+        return (existing or 0) > 0
 
     def _get_mutation_value(self, variable: str, current_value: Any) -> Any:
         """Get a valid mutation value for a variable.
@@ -160,12 +157,12 @@ class RecipeSampler:
 
         # For scene_count, apply constraints
         if variable == "scene_count":
-            candidates = [
-                int(v) for v in candidates
-                if self.MIN_SCENE_COUNT <= int(v) <= self.MAX_SCENE_COUNT
+            int_candidates = [
+                int(v) for v in candidates if self.MIN_SCENE_COUNT <= int(v) <= self.MAX_SCENE_COUNT
             ]
-            if not candidates:
+            if not int_candidates:
                 return current_value
+            return random.choice(int_candidates)
 
         return random.choice(candidates)
 
@@ -315,8 +312,7 @@ class RecipeSampler:
         """
         # Look for existing running experiment with same parameters
         existing = self.session.execute(
-            select(ExperimentModel)
-            .where(
+            select(ExperimentModel).where(
                 ExperimentModel.project_id == self.project_id,
                 ExperimentModel.variable_tested == variable,
                 ExperimentModel.baseline_value == baseline_value,
@@ -482,7 +478,7 @@ class RecipeSampler:
             if job.generation_mode == GenerationMode.EXPLOIT:
                 rec["reason"] = "Based on top-performing recipe"
             else:
-                rec["reason"] = f"A/B test mutation"
+                rec["reason"] = "A/B test mutation"
                 if job.experiment_id:
                     rec["experiment_id"] = str(job.experiment_id)
 

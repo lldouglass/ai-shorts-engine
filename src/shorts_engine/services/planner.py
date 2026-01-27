@@ -4,9 +4,9 @@ import json
 from dataclasses import dataclass, field
 from typing import Any
 
+from shorts_engine.adapters.llm.anthropic import AnthropicProvider
 from shorts_engine.adapters.llm.base import LLMMessage, LLMProvider
 from shorts_engine.adapters.llm.openai import OpenAIProvider
-from shorts_engine.adapters.llm.anthropic import AnthropicProvider
 from shorts_engine.adapters.llm.stub import StubLLMProvider
 from shorts_engine.config import settings
 from shorts_engine.logging import get_logger
@@ -155,7 +155,11 @@ Generate a compelling 7-8 scene video plan that brings this idea to life in the 
         # Get the style preset
         preset = get_preset(style_preset_name)
         if not preset:
-            available = ", ".join(get_preset(name).name for name in ["DARK_DYSTOPIAN_ANIME", "VIBRANT_MOTION_GRAPHICS", "CINEMATIC_REALISM"])
+            available = ", ".join(
+                p.name
+                for name in ["DARK_DYSTOPIAN_ANIME", "VIBRANT_MOTION_GRAPHICS", "CINEMATIC_REALISM"]
+                if (p := get_preset(name))
+            )
             raise ValueError(f"Unknown style preset: {style_preset_name}. Available: {available}")
 
         logger.info(
@@ -196,9 +200,13 @@ Generate a compelling 7-8 scene video plan that brings this idea to life in the 
                 ScenePlan(
                     scene_number=scene_data.get("scene_number", i + 1),
                     visual_prompt=scene_data.get("visual_prompt", ""),
-                    continuity_notes=scene_data.get("continuity_notes", preset.format_continuity_prompt()),
+                    continuity_notes=scene_data.get(
+                        "continuity_notes", preset.format_continuity_prompt()
+                    ),
                     caption_beat=scene_data.get("caption_beat", ""),
-                    duration_seconds=float(scene_data.get("duration_seconds", preset.default_duration_per_scene)),
+                    duration_seconds=float(
+                        scene_data.get("duration_seconds", preset.default_duration_per_scene)
+                    ),
                 )
             )
 

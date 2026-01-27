@@ -1,12 +1,13 @@
 """Tests for adapter implementations."""
 
+from pathlib import Path
+
 import pytest
 
-from shorts_engine.adapters.video_gen.base import VideoGenRequest
-from shorts_engine.adapters.renderer.base import RenderRequest
 from shorts_engine.adapters.publisher.base import PublishRequest
+from shorts_engine.adapters.renderer.base import RenderRequest
+from shorts_engine.adapters.video_gen.base import VideoGenRequest
 from shorts_engine.domain.enums import Platform
-from pathlib import Path
 
 
 @pytest.mark.asyncio
@@ -54,7 +55,6 @@ async def test_renderer_stub(renderer_provider) -> None:
 async def test_publisher_stub(publisher_adapter) -> None:
     """Test stub publisher adapter."""
     import tempfile
-    from pathlib import Path
 
     # Create a temp file
     temp_file = Path(tempfile.mktemp(suffix=".mp4"))

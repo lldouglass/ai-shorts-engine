@@ -1,26 +1,26 @@
 """Admin endpoints for learning loop management."""
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import Any
 from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, Query, status
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 from sqlalchemy import desc, func, select
 
 from shorts_engine.db.models import (
     ExperimentModel,
     PlannedBatchModel,
     ProjectModel,
+    PublishJobModel,
     RecipeModel,
     VideoJobModel,
     VideoMetricsModel,
-    PublishJobModel,
 )
 from shorts_engine.db.session import get_session_context
-from shorts_engine.domain.enums import ExperimentStatus, BatchStatus
+from shorts_engine.domain.enums import ExperimentStatus
 from shorts_engine.logging import get_logger
-from shorts_engine.services.learning.recipe import Recipe, RecipeService
+from shorts_engine.services.learning.recipe import RecipeService
 from shorts_engine.services.learning.reward import RewardCalculator
 from shorts_engine.services.learning.sampler import RecipeSampler
 
@@ -160,25 +160,31 @@ async def get_recommendations(
         top_recipes = recipe_service.get_top_recipes(project_uuid, limit=5)
 
         # Count running experiments
-        running_experiments = session.execute(
-            select(func.count())
-            .select_from(ExperimentModel)
-            .where(
-                ExperimentModel.project_id == project_uuid,
-                ExperimentModel.status == ExperimentStatus.RUNNING,
-            )
-        ).scalar() or 0
+        running_experiments = (
+            session.execute(
+                select(func.count())
+                .select_from(ExperimentModel)
+                .where(
+                    ExperimentModel.project_id == project_uuid,
+                    ExperimentModel.status == ExperimentStatus.RUNNING,
+                )
+            ).scalar()
+            or 0
+        )
 
         # Count recent batches
-        cutoff = datetime.now(timezone.utc) - timedelta(days=7)
-        recent_batches = session.execute(
-            select(func.count())
-            .select_from(PlannedBatchModel)
-            .where(
-                PlannedBatchModel.project_id == project_uuid,
-                PlannedBatchModel.created_at >= cutoff,
-            )
-        ).scalar() or 0
+        cutoff = datetime.now(UTC) - timedelta(days=7)
+        recent_batches = (
+            session.execute(
+                select(func.count())
+                .select_from(PlannedBatchModel)
+                .where(
+                    PlannedBatchModel.project_id == project_uuid,
+                    PlannedBatchModel.created_at >= cutoff,
+                )
+            ).scalar()
+            or 0
+        )
 
         return RecommendationsResponse(
             recommendations=[
@@ -221,7 +227,9 @@ async def get_recommendations(
 )
 async def list_recipes(
     project_id: str = Query(..., description="Project ID"),
-    sort_by: str = Query("avg_reward_score", description="Sort by: avg_reward_score, times_used, created_at"),
+    sort_by: str = Query(
+        "avg_reward_score", description="Sort by: avg_reward_score, times_used, created_at"
+    ),
     limit: int = Query(20, ge=1, le=100, description="Number of results"),
 ) -> list[RecipeResponse]:
     """List recipes for a project."""
@@ -274,7 +282,9 @@ async def list_recipes(
 )
 async def list_experiments(
     project_id: str = Query(..., description="Project ID"),
-    status_filter: str | None = Query(None, description="Filter by status: running, completed, inconclusive"),
+    status_filter: str | None = Query(
+        None, description="Filter by status: running, completed, inconclusive"
+    ),
     limit: int = Query(20, ge=1, le=100, description="Number of results"),
 ) -> list[ExperimentResponse]:
     """List experiments for a project."""
@@ -337,12 +347,16 @@ async def list_batches(
         )
 
     with get_session_context() as session:
-        batches = session.execute(
-            select(PlannedBatchModel)
-            .where(PlannedBatchModel.project_id == project_uuid)
-            .order_by(desc(PlannedBatchModel.created_at))
-            .limit(limit)
-        ).scalars().all()
+        batches = (
+            session.execute(
+                select(PlannedBatchModel)
+                .where(PlannedBatchModel.project_id == project_uuid)
+                .order_by(desc(PlannedBatchModel.created_at))
+                .limit(limit)
+            )
+            .scalars()
+            .all()
+        )
 
         return [
             BatchResponse(
@@ -380,54 +394,72 @@ async def get_learning_stats(
 
     with get_session_context() as session:
         # Count recipes
-        total_recipes = session.execute(
-            select(func.count())
-            .select_from(RecipeModel)
-            .where(RecipeModel.project_id == project_uuid)
-        ).scalar() or 0
+        total_recipes = (
+            session.execute(
+                select(func.count())
+                .select_from(RecipeModel)
+                .where(RecipeModel.project_id == project_uuid)
+            ).scalar()
+            or 0
+        )
 
         # Count experiments
-        total_experiments = session.execute(
-            select(func.count())
-            .select_from(ExperimentModel)
-            .where(ExperimentModel.project_id == project_uuid)
-        ).scalar() or 0
+        total_experiments = (
+            session.execute(
+                select(func.count())
+                .select_from(ExperimentModel)
+                .where(ExperimentModel.project_id == project_uuid)
+            ).scalar()
+            or 0
+        )
 
-        running_experiments = session.execute(
-            select(func.count())
-            .select_from(ExperimentModel)
-            .where(
-                ExperimentModel.project_id == project_uuid,
-                ExperimentModel.status == ExperimentStatus.RUNNING,
-            )
-        ).scalar() or 0
+        running_experiments = (
+            session.execute(
+                select(func.count())
+                .select_from(ExperimentModel)
+                .where(
+                    ExperimentModel.project_id == project_uuid,
+                    ExperimentModel.status == ExperimentStatus.RUNNING,
+                )
+            ).scalar()
+            or 0
+        )
 
-        completed_experiments = session.execute(
-            select(func.count())
-            .select_from(ExperimentModel)
-            .where(
-                ExperimentModel.project_id == project_uuid,
-                ExperimentModel.status == ExperimentStatus.COMPLETED,
-            )
-        ).scalar() or 0
+        completed_experiments = (
+            session.execute(
+                select(func.count())
+                .select_from(ExperimentModel)
+                .where(
+                    ExperimentModel.project_id == project_uuid,
+                    ExperimentModel.status == ExperimentStatus.COMPLETED,
+                )
+            ).scalar()
+            or 0
+        )
 
         # Count batches
-        total_batches = session.execute(
-            select(func.count())
-            .select_from(PlannedBatchModel)
-            .where(PlannedBatchModel.project_id == project_uuid)
-        ).scalar() or 0
+        total_batches = (
+            session.execute(
+                select(func.count())
+                .select_from(PlannedBatchModel)
+                .where(PlannedBatchModel.project_id == project_uuid)
+            ).scalar()
+            or 0
+        )
 
         # Count videos in last 7 days
-        cutoff = datetime.now(timezone.utc) - timedelta(days=7)
-        videos_last_7d = session.execute(
-            select(func.count())
-            .select_from(VideoJobModel)
-            .where(
-                VideoJobModel.project_id == project_uuid,
-                VideoJobModel.created_at >= cutoff,
-            )
-        ).scalar() or 0
+        cutoff = datetime.now(UTC) - timedelta(days=7)
+        videos_last_7d = (
+            session.execute(
+                select(func.count())
+                .select_from(VideoJobModel)
+                .where(
+                    VideoJobModel.project_id == project_uuid,
+                    VideoJobModel.created_at >= cutoff,
+                )
+            ).scalar()
+            or 0
+        )
 
         # Average reward score
         avg_reward = session.execute(

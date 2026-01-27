@@ -1,23 +1,24 @@
 """Celery tasks for metrics and comments ingestion."""
 
 import math
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import Any
 from uuid import UUID
 
 from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
+from sqlalchemy.orm import Session
 
-from shorts_engine.adapters.analytics.youtube import YouTubeAnalyticsAdapter
 from shorts_engine.adapters.analytics.instagram import InstagramAnalyticsAdapter
 from shorts_engine.adapters.analytics.tiktok import TikTokAnalyticsAdapter
-from shorts_engine.adapters.comments.youtube import YouTubeCommentsAdapter
+from shorts_engine.adapters.analytics.youtube import YouTubeAnalyticsAdapter
 from shorts_engine.adapters.comments.instagram import InstagramCommentsAdapter
 from shorts_engine.adapters.comments.tiktok import TikTokCommentsAdapter
+from shorts_engine.adapters.comments.youtube import YouTubeCommentsAdapter
 from shorts_engine.db.models import (
     PublishJobModel,
-    VideoMetricsModel,
     VideoCommentModel,
+    VideoMetricsModel,
 )
 from shorts_engine.db.session import get_session_context
 from shorts_engine.logging import get_logger
@@ -101,20 +102,24 @@ def ingest_metrics_batch_task(
     task_id = self.request.id
     logger.info("ingest_metrics_batch_started", task_id=task_id, since_hours=since_hours)
 
-    cutoff = datetime.now(timezone.utc) - timedelta(hours=since_hours)
+    cutoff = datetime.now(UTC) - timedelta(hours=since_hours)
     processed = 0
     metrics_created = 0
     errors = 0
 
     with get_session_context() as session:
         # Get all published videos with platform IDs
-        publish_jobs = session.execute(
-            select(PublishJobModel).where(
-                PublishJobModel.platform_video_id.isnot(None),
-                PublishJobModel.status == "published",
-                PublishJobModel.actual_publish_at >= cutoff,
+        publish_jobs = (
+            session.execute(
+                select(PublishJobModel).where(
+                    PublishJobModel.platform_video_id.isnot(None),
+                    PublishJobModel.status == "published",
+                    PublishJobModel.actual_publish_at >= cutoff,
+                )
             )
-        ).scalars().all()
+            .scalars()
+            .all()
+        )
 
         logger.info("ingest_metrics_batch_found", count=len(publish_jobs))
 
@@ -142,7 +147,9 @@ def ingest_metrics_batch_task(
     return result
 
 
-def _get_analytics_adapter(platform: str, account_id: UUID):
+def _get_analytics_adapter(
+    platform: str, account_id: UUID
+) -> YouTubeAnalyticsAdapter | InstagramAnalyticsAdapter | TikTokAnalyticsAdapter:
     """Get the appropriate analytics adapter for a platform.
 
     Args:
@@ -165,7 +172,9 @@ def _get_analytics_adapter(platform: str, account_id: UUID):
         raise ValueError(f"Unsupported platform for analytics: {platform}")
 
 
-def _get_comments_adapter(platform: str, account_id: UUID):
+def _get_comments_adapter(
+    platform: str, account_id: UUID
+) -> YouTubeCommentsAdapter | InstagramCommentsAdapter | TikTokCommentsAdapter:
     """Get the appropriate comments adapter for a platform.
 
     Args:
@@ -188,7 +197,7 @@ def _get_comments_adapter(platform: str, account_id: UUID):
         raise ValueError(f"Unsupported platform for comments: {platform}")
 
 
-def _ingest_single_video_metrics(session, pub_job: PublishJobModel) -> int:
+def _ingest_single_video_metrics(session: Session, pub_job: PublishJobModel) -> int:
     """Ingest metrics for a single video.
 
     Args:
@@ -201,6 +210,10 @@ def _ingest_single_video_metrics(session, pub_job: PublishJobModel) -> int:
     supported_platforms = ("youtube", "instagram", "tiktok")
     if pub_job.platform not in supported_platforms:
         logger.debug("ingest_metrics_skip_platform", platform=pub_job.platform)
+        return 0
+
+    if not pub_job.platform_video_id:
+        logger.debug("ingest_metrics_skip_no_video_id", publish_job_id=str(pub_job.id))
         return 0
 
     adapter = _get_analytics_adapter(pub_job.platform, pub_job.account_id)
@@ -216,7 +229,7 @@ def _ingest_single_video_metrics(session, pub_job: PublishJobModel) -> int:
             )
         )
 
-        for windowed in windows:
+        for windowed in windows:  # type: ignore[attr-defined]
             metrics = windowed.metrics
 
             # Extract raw data fields
@@ -245,7 +258,9 @@ def _ingest_single_video_metrics(session, pub_job: PublishJobModel) -> int:
                 dislikes=int(dislikes) if dislikes else 0,
                 comments_count=metrics.comments_count,
                 shares=metrics.shares,
-                watch_time_minutes=metrics.watch_time_seconds // 60 if metrics.watch_time_seconds else 0,
+                watch_time_minutes=(
+                    metrics.watch_time_seconds // 60 if metrics.watch_time_seconds else 0
+                ),
                 avg_view_duration_seconds=metrics.avg_view_duration_seconds,
                 avg_view_percentage=avg_view_percentage,
                 engagement_rate=metrics.engagement_rate,
@@ -314,19 +329,23 @@ def ingest_comments_batch_task(
         max_per_video=max_per_video,
     )
 
-    cutoff = datetime.now(timezone.utc) - timedelta(hours=since_hours)
+    cutoff = datetime.now(UTC) - timedelta(hours=since_hours)
     processed = 0
     total_comments = 0
     errors = 0
 
     with get_session_context() as session:
-        publish_jobs = session.execute(
-            select(PublishJobModel).where(
-                PublishJobModel.platform_video_id.isnot(None),
-                PublishJobModel.status == "published",
-                PublishJobModel.actual_publish_at >= cutoff,
+        publish_jobs = (
+            session.execute(
+                select(PublishJobModel).where(
+                    PublishJobModel.platform_video_id.isnot(None),
+                    PublishJobModel.status == "published",
+                    PublishJobModel.actual_publish_at >= cutoff,
+                )
             )
-        ).scalars().all()
+            .scalars()
+            .all()
+        )
 
         logger.info("ingest_comments_batch_found", count=len(publish_jobs))
 
@@ -355,7 +374,7 @@ def ingest_comments_batch_task(
 
 
 def _ingest_single_video_comments(
-    session,
+    session: Session,
     pub_job: PublishJobModel,
     max_results: int,
 ) -> int:
@@ -372,6 +391,10 @@ def _ingest_single_video_comments(
     supported_platforms = ("youtube", "instagram", "tiktok")
     if pub_job.platform not in supported_platforms:
         logger.debug("ingest_comments_skip_platform", platform=pub_job.platform)
+        return 0
+
+    if not pub_job.platform_video_id:
+        logger.debug("ingest_comments_skip_no_video_id", publish_job_id=str(pub_job.id))
         return 0
 
     adapter = _get_comments_adapter(pub_job.platform, pub_job.account_id)
@@ -399,7 +422,7 @@ def _ingest_single_video_comments(
                 reply_count=raw_data.get("reply_count", 0),
                 published_at=comment.posted_at,
                 raw_data=comment.raw_data,
-                fetched_at=datetime.now(timezone.utc),
+                fetched_at=datetime.now(UTC),
             )
 
             stmt = stmt.on_conflict_do_update(
@@ -411,7 +434,7 @@ def _ingest_single_video_comments(
                 },
             )
 
-            result = session.execute(stmt)
+            session.execute(stmt)
             # Count as new if actually inserted (not just updated)
             new_count += 1
 

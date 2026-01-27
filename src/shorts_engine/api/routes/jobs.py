@@ -7,6 +7,8 @@ from celery.result import AsyncResult
 from fastapi import APIRouter, HTTPException, status
 from pydantic import BaseModel, Field
 
+from shorts_engine.jobs.publish_pipeline import run_publish_pipeline_task
+from shorts_engine.jobs.render_pipeline import run_render_pipeline_task
 from shorts_engine.jobs.tasks import (
     generate_video_task,
     ingest_analytics_task,
@@ -14,9 +16,7 @@ from shorts_engine.jobs.tasks import (
     publish_video_task,
     smoke_test_task,
 )
-from shorts_engine.jobs.render_pipeline import run_render_pipeline_task
 from shorts_engine.jobs.video_pipeline import run_full_pipeline_task
-from shorts_engine.jobs.publish_pipeline import run_publish_pipeline_task
 from shorts_engine.logging import get_logger
 from shorts_engine.worker import celery_app
 
@@ -323,9 +323,15 @@ class PublishShortRequest(BaseModel):
     """Request to publish a short video to platforms."""
 
     video_job_id: str = Field(..., description="Video job UUID to publish")
-    destinations: list[DestinationItem] | None = Field(None, description="List of platform:label destinations")
-    youtube_account: str | None = Field(None, description="YouTube account label (legacy, use destinations)")
-    scheduled_publish_at: str | None = Field(None, description="ISO 8601 datetime for scheduled publishing")
+    destinations: list[DestinationItem] | None = Field(
+        None, description="List of platform:label destinations"
+    )
+    youtube_account: str | None = Field(
+        None, description="YouTube account label (legacy, use destinations)"
+    )
+    scheduled_publish_at: str | None = Field(
+        None, description="ISO 8601 datetime for scheduled publishing"
+    )
     visibility: str = Field(default="public", pattern="^(public|private|unlisted)$")
     dry_run: bool = Field(default=False, description="Log what would happen without uploading")
 

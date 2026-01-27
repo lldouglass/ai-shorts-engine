@@ -1,7 +1,8 @@
 """Unit tests for render pipeline tasks."""
 
-import pytest
 from unittest.mock import MagicMock, patch
+
+import pytest
 
 from shorts_engine.adapters.renderer.creatomate import SceneClip
 
@@ -14,8 +15,8 @@ class TestRenderPipelineHelpers:
         with patch("shorts_engine.jobs.render_pipeline.settings") as mock_settings:
             mock_settings.voiceover_provider = "stub"
 
-            from shorts_engine.jobs.render_pipeline import get_voiceover_provider
             from shorts_engine.adapters.voiceover.stub import StubVoiceoverProvider
+            from shorts_engine.jobs.render_pipeline import get_voiceover_provider
 
             provider = get_voiceover_provider()
             assert isinstance(provider, StubVoiceoverProvider)
@@ -25,8 +26,8 @@ class TestRenderPipelineHelpers:
         with patch("shorts_engine.jobs.render_pipeline.settings") as mock_settings:
             mock_settings.voiceover_provider = "elevenlabs"
 
-            from shorts_engine.jobs.render_pipeline import get_voiceover_provider
             from shorts_engine.adapters.voiceover.elevenlabs import ElevenLabsProvider
+            from shorts_engine.jobs.render_pipeline import get_voiceover_provider
 
             provider = get_voiceover_provider()
             assert isinstance(provider, ElevenLabsProvider)
@@ -36,8 +37,8 @@ class TestRenderPipelineHelpers:
         with patch("shorts_engine.jobs.render_pipeline.settings") as mock_settings:
             mock_settings.voiceover_provider = "edge_tts"
 
-            from shorts_engine.jobs.render_pipeline import get_voiceover_provider
             from shorts_engine.adapters.voiceover.edge_tts import EdgeTTSProvider
+            from shorts_engine.jobs.render_pipeline import get_voiceover_provider
 
             provider = get_voiceover_provider()
             assert isinstance(provider, EdgeTTSProvider)
@@ -47,8 +48,8 @@ class TestRenderPipelineHelpers:
         with patch("shorts_engine.jobs.render_pipeline.settings") as mock_settings:
             mock_settings.renderer_provider = "stub"
 
-            from shorts_engine.jobs.render_pipeline import get_renderer_provider
             from shorts_engine.adapters.renderer.stub import StubRendererProvider
+            from shorts_engine.jobs.render_pipeline import get_renderer_provider
 
             provider = get_renderer_provider()
             assert isinstance(provider, StubRendererProvider)
@@ -58,8 +59,8 @@ class TestRenderPipelineHelpers:
         with patch("shorts_engine.jobs.render_pipeline.settings") as mock_settings:
             mock_settings.renderer_provider = "creatomate"
 
-            from shorts_engine.jobs.render_pipeline import get_renderer_provider
             from shorts_engine.adapters.renderer.creatomate import CreatomateProvider
+            from shorts_engine.jobs.render_pipeline import get_renderer_provider
 
             provider = get_renderer_provider()
             assert isinstance(provider, CreatomateProvider)
@@ -221,10 +222,7 @@ class TestRenderFinalVideoLogic:
     def test_8_scene_typical_duration(self):
         """Test typical 8-scene video duration."""
         # Typical short: 7-8 scenes, 5-7 seconds each
-        scenes = [
-            SceneClip(video_url=f"url{i}", duration_seconds=5.0 + (i % 3))
-            for i in range(8)
-        ]
+        scenes = [SceneClip(video_url=f"url{i}", duration_seconds=5.0 + (i % 3)) for i in range(8)]
 
         total = sum(s.duration_seconds for s in scenes)
         # Should be roughly 40-56 seconds

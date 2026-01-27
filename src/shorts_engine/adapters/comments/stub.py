@@ -68,7 +68,7 @@ class StubCommentsAdapter(CommentsAdapter):
         comments = []
         base_time = datetime.now()
 
-        for i in range(num_comments):
+        for _ in range(num_comments):
             posted_at = base_time - timedelta(
                 hours=random.randint(1, 168),  # Up to 1 week ago
                 minutes=random.randint(0, 59),

@@ -3,9 +3,8 @@
 Handles publishing videos to YouTube, Instagram, and TikTok with multi-account support.
 """
 
-import logging
 import tempfile
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 from uuid import UUID, uuid4
@@ -13,12 +12,6 @@ from uuid import UUID, uuid4
 import httpx
 from celery import shared_task
 
-from shorts_engine.adapters.publisher.youtube import (
-    YouTubePublisher,
-    YouTubeAccountState,
-    build_dry_run_payload,
-)
-from shorts_engine.adapters.publisher.youtube_oauth import OAuthError
 from shorts_engine.adapters.publisher.instagram import (
     InstagramPublisher,
     build_instagram_dry_run_payload,
@@ -29,20 +22,22 @@ from shorts_engine.adapters.publisher.tiktok import (
     build_tiktok_dry_run_payload,
 )
 from shorts_engine.adapters.publisher.tiktok_oauth import TikTokOAuthError
+from shorts_engine.adapters.publisher.youtube import (
+    YouTubePublisher,
+    build_dry_run_payload,
+)
+from shorts_engine.adapters.publisher.youtube_oauth import OAuthError
 from shorts_engine.config import settings
 from shorts_engine.db.models import (
-    AssetModel,
-    PlatformAccountModel,
     PublishJobModel,
     VideoJobModel,
 )
 from shorts_engine.db.session import get_session_context
 from shorts_engine.domain.enums import PublishStatus
+from shorts_engine.logging import get_logger
 from shorts_engine.services.accounts import (
-    AccountError,
     AccountNotFoundError,
     check_upload_limit,
-    get_account_by_id,
     get_account_by_label,
     get_account_state,
     get_instagram_account_state,
@@ -51,9 +46,8 @@ from shorts_engine.services.accounts import (
     mark_account_revoked,
     update_account_tokens,
 )
-from shorts_engine.services.encryption import decrypt_token
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 class PublishError(Exception):
@@ -71,7 +65,7 @@ class PublishError(Exception):
     retry_backoff_max=600,
 )
 def publish_to_youtube_task(
-    self,
+    _self: Any,
     video_job_id: str,
     account_label: str,
     scheduled_publish_at: str | None = None,
@@ -222,7 +216,7 @@ def publish_to_youtube_task(
                 publish_job.status = "published"
                 publish_job.platform_video_id = result.platform_video_id
                 publish_job.platform_url = result.url
-                publish_job.actual_publish_at = datetime.now(timezone.utc)
+                publish_job.actual_publish_at = datetime.now(UTC)
                 publish_job.api_response = result.metadata
 
                 # Check if forced private
@@ -234,7 +228,7 @@ def publish_to_youtube_task(
                 increment_upload_count(session, account.id)
 
                 # Update tokens if refreshed
-                if publisher.account_state:
+                if publisher.account_state and publisher.account_state.token_expires_at:
                     update_account_tokens(
                         session,
                         account.id,
@@ -327,11 +321,11 @@ def _download_video(url: str) -> Path:
     retry_backoff_max=600,
 )
 def publish_to_instagram_task(
-    self,
+    _self: Any,
     video_job_id: str,
     account_label: str,
-    scheduled_publish_at: str | None = None,
-    visibility: str = "public",
+    _scheduled_publish_at: str | None = None,
+    _visibility: str = "public",
     dry_run: bool = False,
 ) -> dict[str, Any]:
     """Publish a video to Instagram Reels.
@@ -453,7 +447,7 @@ def publish_to_instagram_task(
                 publish_job.status = "published"
                 publish_job.platform_video_id = result.platform_video_id
                 publish_job.platform_url = result.url
-                publish_job.actual_publish_at = datetime.now(timezone.utc)
+                publish_job.actual_publish_at = datetime.now(UTC)
                 publish_job.api_response = result.metadata
 
                 increment_upload_count(session, account.id)
@@ -516,10 +510,10 @@ def publish_to_instagram_task(
     retry_backoff_max=600,
 )
 def publish_to_tiktok_task(
-    self,
+    _self: Any,
     video_job_id: str,
     account_label: str,
-    scheduled_publish_at: str | None = None,
+    _scheduled_publish_at: str | None = None,
     visibility: str = "public",
     dry_run: bool = False,
 ) -> dict[str, Any]:
@@ -677,7 +671,7 @@ def publish_to_tiktok_task(
                 publish_job.status = "published"
                 publish_job.platform_video_id = result.platform_video_id
                 publish_job.platform_url = result.url
-                publish_job.actual_publish_at = datetime.now(timezone.utc)
+                publish_job.actual_publish_at = datetime.now(UTC)
                 publish_job.api_response = result.metadata
 
                 increment_upload_count(session, account.id)
@@ -733,7 +727,7 @@ def publish_to_tiktok_task(
 
 @shared_task(bind=True)
 def run_publish_pipeline_task(
-    self,
+    _self: Any,
     video_job_id: str,
     youtube_account: str | None = None,
     instagram_account: str | None = None,
@@ -848,7 +842,7 @@ def run_publish_pipeline_task(
 
 @shared_task(bind=True)
 def check_publish_status_task(
-    self,
+    _self: Any,
     publish_job_id: str,
 ) -> dict[str, Any]:
     """Check the status of a published video on the platform.

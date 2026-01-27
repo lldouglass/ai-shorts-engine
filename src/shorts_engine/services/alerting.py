@@ -2,7 +2,7 @@
 
 import smtplib
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from enum import StrEnum
@@ -35,7 +35,7 @@ class Alert:
     severity: AlertSeverity = AlertSeverity.ERROR
     context: dict[str, Any] = field(default_factory=dict)
     video_job_id: UUID | None = None
-    timestamp: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    timestamp: datetime = field(default_factory=lambda: datetime.now(UTC))
 
 
 class AlertingService:
@@ -58,9 +58,7 @@ class AlertingService:
         """Initialize alerting service."""
         self.discord_webhook_url = settings.alert_discord_webhook_url
         self.email_enabled = bool(
-            settings.alert_email_smtp_host
-            and settings.alert_email_from
-            and settings.alert_email_to
+            settings.alert_email_smtp_host and settings.alert_email_from and settings.alert_email_to
         )
 
     async def send_alert(self, alert: Alert) -> bool:
@@ -107,21 +105,25 @@ class AlertingService:
         # Build embed fields from context
         fields = []
         if alert.video_job_id:
-            fields.append({
-                "name": "Video Job ID",
-                "value": f"`{alert.video_job_id}`",
-                "inline": True,
-            })
+            fields.append(
+                {
+                    "name": "Video Job ID",
+                    "value": f"`{alert.video_job_id}`",
+                    "inline": True,
+                }
+            )
         for key, value in alert.context.items():
             # Truncate long values
             str_value = str(value)
             if len(str_value) > 200:
                 str_value = str_value[:197] + "..."
-            fields.append({
-                "name": key.replace("_", " ").title(),
-                "value": str_value,
-                "inline": True,
-            })
+            fields.append(
+                {
+                    "name": key.replace("_", " ").title(),
+                    "value": str_value,
+                    "inline": True,
+                }
+            )
 
         payload = {
             "embeds": [
@@ -208,6 +210,11 @@ Context:
 --
 Sent by AI Shorts Engine Alerting
         """
+
+        # Validate required email settings (should already be checked by email_enabled)
+        if not settings.alert_email_from or not settings.alert_email_smtp_host:
+            logger.warning("email_settings_missing")
+            return False
 
         msg = MIMEMultipart("alternative")
         msg["Subject"] = subject

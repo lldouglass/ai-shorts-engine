@@ -2,7 +2,6 @@
 
 from datetime import datetime
 from typing import Any
-from uuid import UUID
 
 from shorts_engine.adapters.analytics.stub import StubAnalyticsAdapter
 from shorts_engine.adapters.comments.stub import StubCommentsAdapter
@@ -50,6 +49,9 @@ def smoke_test_task(self: Any) -> dict[str, Any]:
         # Test publisher stub
         publisher = StubPublisherAdapter(platform=Platform.YOUTUBE)
         from shorts_engine.adapters.publisher.base import PublishRequest
+
+        if not render_result.output_path:
+            raise RuntimeError("Rendering succeeded but output_path is None")
 
         publish_request = PublishRequest(
             video_path=render_result.output_path,

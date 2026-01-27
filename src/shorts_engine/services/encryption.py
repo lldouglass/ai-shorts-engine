@@ -3,7 +3,6 @@
 Uses Fernet symmetric encryption with a master key from environment variables.
 """
 
-import base64
 import os
 from functools import lru_cache
 

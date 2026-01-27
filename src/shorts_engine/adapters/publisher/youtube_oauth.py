@@ -3,15 +3,14 @@
 Supports both device flow (preferred for CLI) and local callback server.
 """
 
-import json
+import contextlib
 import logging
 import os
 import secrets
 import time
 import webbrowser
 from dataclasses import dataclass
-from http.server import HTTPServer, BaseHTTPRequestHandler
-from threading import Thread
+from http.server import BaseHTTPRequestHandler, HTTPServer
 from typing import Any
 from urllib.parse import parse_qs, urlencode, urlparse
 
@@ -106,7 +105,7 @@ class DeviceFlowAuth:
         if response.status_code != 200:
             raise OAuthError(f"Device flow initiation failed: {response.text}")
 
-        return response.json()
+        return response.json()  # type: ignore[no-any-return]
 
     def poll_for_token(
         self,
@@ -248,7 +247,7 @@ class LocalCallbackAuth:
         outer = self
 
         class CallbackHandler(BaseHTTPRequestHandler):
-            def do_GET(self):
+            def do_GET(self) -> None:
                 parsed = urlparse(self.path)
                 params = parse_qs(parsed.query)
 
@@ -286,7 +285,7 @@ class LocalCallbackAuth:
                 self.send_response(404)
                 self.end_headers()
 
-            def log_message(self, format, *args):
+            def log_message(self, format: str, *args: object) -> None:
                 # Suppress HTTP server logs
                 pass
 
@@ -412,7 +411,7 @@ def refresh_access_token(refresh_token: str) -> dict[str, Any]:
 
         raise OAuthError(f"Token refresh failed: {error_desc}")
 
-    return response.json()
+    return response.json()  # type: ignore[no-any-return]
 
 
 def run_device_flow() -> OAuthCredentials:
@@ -438,10 +437,8 @@ def run_device_flow() -> OAuthCredentials:
     print(f"\nWaiting for authorization (expires in {expires_in // 60} minutes)...")
 
     # Try to open browser
-    try:
+    with contextlib.suppress(Exception):
         webbrowser.open(verification_url)
-    except Exception:
-        pass  # Browser open is optional
 
     # Poll for token
     return auth.poll_for_token(device_code, interval=interval, timeout=expires_in)
@@ -464,14 +461,12 @@ def run_local_callback_flow(port: int = 8085) -> OAuthCredentials:
     # Generate authorization URL
     auth_url, state = auth.get_authorization_url()
 
-    print(f"\nOpening browser for authorization...")
+    print("\nOpening browser for authorization...")
     print(f"If the browser doesn't open, go to:\n{auth_url}\n")
 
     # Open browser
-    try:
+    with contextlib.suppress(Exception):
         webbrowser.open(auth_url)
-    except Exception:
-        pass
 
     # Start callback server and wait for code
     print(f"Waiting for callback on port {port}...")

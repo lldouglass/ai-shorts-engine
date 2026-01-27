@@ -8,7 +8,6 @@ from dataclasses import dataclass
 from datetime import datetime
 from uuid import UUID
 
-
 # YouTube
 DEFAULT_YOUTUBE_MAX_UPLOADS_PER_DAY = 50
 

@@ -1,11 +1,11 @@
 """Dashboard endpoints for video performance analytics."""
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import Any
 from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, Query, status
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 from sqlalchemy import desc, func, select
 from sqlalchemy.orm import selectinload
 
@@ -14,7 +14,6 @@ from shorts_engine.db.models import (
     VideoCommentModel,
     VideoJobModel,
     VideoMetricsModel,
-    VideoRecipeFeaturesModel,
 )
 from shorts_engine.db.session import get_session_context
 from shorts_engine.logging import get_logger
@@ -141,9 +140,9 @@ async def get_top_videos(
         # Get total count of published videos
         total_count = (
             session.execute(
-                select(func.count()).select_from(PublishJobModel).where(
-                    PublishJobModel.status == "published"
-                )
+                select(func.count())
+                .select_from(PublishJobModel)
+                .where(PublishJobModel.status == "published")
             ).scalar()
             or 0
         )
@@ -324,9 +323,7 @@ async def get_video_comments(
                 detail="Publish job not found",
             )
 
-        query = select(VideoCommentModel).where(
-            VideoCommentModel.publish_job_id == job_uuid
-        )
+        query = select(VideoCommentModel).where(VideoCommentModel.publish_job_id == job_uuid)
 
         if sort_by == "likes":
             query = query.order_by(desc(VideoCommentModel.like_count))
@@ -362,16 +359,16 @@ async def get_video_comments(
 async def get_dashboard_stats() -> DashboardStats:
     """Get aggregate stats for the dashboard."""
     with get_session_context() as session:
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         cutoff_24h = now - timedelta(hours=24)
         cutoff_7d = now - timedelta(days=7)
 
         # Total published videos
         total_published = (
             session.execute(
-                select(func.count()).select_from(PublishJobModel).where(
-                    PublishJobModel.status == "published"
-                )
+                select(func.count())
+                .select_from(PublishJobModel)
+                .where(PublishJobModel.status == "published")
             ).scalar()
             or 0
         )
@@ -407,7 +404,9 @@ async def get_dashboard_stats() -> DashboardStats:
         # Videos published in last 24h
         videos_24h = (
             session.execute(
-                select(func.count()).select_from(PublishJobModel).where(
+                select(func.count())
+                .select_from(PublishJobModel)
+                .where(
                     PublishJobModel.status == "published",
                     PublishJobModel.actual_publish_at >= cutoff_24h,
                 )
@@ -418,7 +417,9 @@ async def get_dashboard_stats() -> DashboardStats:
         # Videos published in last 7d
         videos_7d = (
             session.execute(
-                select(func.count()).select_from(PublishJobModel).where(
+                select(func.count())
+                .select_from(PublishJobModel)
+                .where(
                     PublishJobModel.status == "published",
                     PublishJobModel.actual_publish_at >= cutoff_7d,
                 )
@@ -486,11 +487,15 @@ async def get_video_details(publish_job_id: str) -> dict[str, Any]:
         video_job = pub_job.video_job
 
         # Fetch all metrics at once and group by window type (single query)
-        all_metrics = session.execute(
-            select(VideoMetricsModel)
-            .where(VideoMetricsModel.publish_job_id == job_uuid)
-            .order_by(VideoMetricsModel.window_type, desc(VideoMetricsModel.fetched_at))
-        ).scalars().all()
+        all_metrics = (
+            session.execute(
+                select(VideoMetricsModel)
+                .where(VideoMetricsModel.publish_job_id == job_uuid)
+                .order_by(VideoMetricsModel.window_type, desc(VideoMetricsModel.fetched_at))
+            )
+            .scalars()
+            .all()
+        )
 
         # Group by window type and take the latest (first after ordering)
         metrics_by_window = {}
@@ -513,9 +518,9 @@ async def get_video_details(publish_job_id: str) -> dict[str, Any]:
         # Get comment count
         comment_count = (
             session.execute(
-                select(func.count()).select_from(VideoCommentModel).where(
-                    VideoCommentModel.publish_job_id == job_uuid
-                )
+                select(func.count())
+                .select_from(VideoCommentModel)
+                .where(VideoCommentModel.publish_job_id == job_uuid)
             ).scalar()
             or 0
         )
@@ -528,7 +533,9 @@ async def get_video_details(publish_job_id: str) -> dict[str, Any]:
                 "platform_url": pub_job.platform_url,
                 "status": pub_job.status,
                 "visibility": pub_job.visibility,
-                "published_at": pub_job.actual_publish_at.isoformat() if pub_job.actual_publish_at else None,
+                "published_at": (
+                    pub_job.actual_publish_at.isoformat() if pub_job.actual_publish_at else None
+                ),
             },
             "video_job": {
                 "id": str(video_job.id) if video_job else None,
@@ -538,13 +545,17 @@ async def get_video_details(publish_job_id: str) -> dict[str, Any]:
                 "idea": video_job.idea if video_job else None,
             },
             "metrics": metrics_by_window,
-            "recipe_features": {
-                "hook_type": features.hook_type if features else None,
-                "scene_count": features.scene_count if features else None,
-                "total_duration": features.total_duration_seconds if features else None,
-                "caption_density": features.caption_density if features else None,
-                "has_voiceover": features.has_voiceover if features else None,
-                "narration_wpm": features.narration_wpm if features else None,
-            } if features else None,
+            "recipe_features": (
+                {
+                    "hook_type": features.hook_type if features else None,
+                    "scene_count": features.scene_count if features else None,
+                    "total_duration": features.total_duration_seconds if features else None,
+                    "caption_density": features.caption_density if features else None,
+                    "has_voiceover": features.has_voiceover if features else None,
+                    "narration_wpm": features.narration_wpm if features else None,
+                }
+                if features
+                else None
+            ),
             "comment_count": comment_count,
         }

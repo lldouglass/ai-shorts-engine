@@ -1,20 +1,20 @@
 """Unit tests for YouTube publishing."""
 
-import pytest
-from datetime import datetime, timezone, timedelta
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from unittest.mock import MagicMock, patch
 from uuid import uuid4
 
+import pytest
+
+from shorts_engine.adapters.publisher.base import PublishRequest
 from shorts_engine.adapters.publisher.youtube import (
-    YouTubePublisher,
+    MAX_DESCRIPTION_LENGTH,
+    MAX_TITLE_LENGTH,
     YouTubeAccountState,
+    YouTubePublisher,
     YouTubeUploadResult,
     build_dry_run_payload,
-    MAX_TITLE_LENGTH,
-    MAX_DESCRIPTION_LENGTH,
 )
-from shorts_engine.adapters.publisher.base import PublishRequest
 from shorts_engine.domain.enums import Platform
 
 
@@ -138,7 +138,7 @@ class TestYouTubePublisher:
             visibility="public",
         )
 
-        scheduled_time = datetime.now(timezone.utc) + timedelta(hours=24)
+        scheduled_time = datetime.now(UTC) + timedelta(hours=24)
         metadata = publisher._build_video_metadata(request, scheduled_time)
 
         # Scheduled videos must be private until publish time
@@ -180,12 +180,12 @@ class TestYouTubePublisher:
 
     def test_check_rate_limit_exceeded(self, publisher):
         """Test rate limit check when limit exceeded."""
-        from datetime import datetime, timezone, timedelta
+        from datetime import datetime, timedelta
 
         publisher.account_state.uploads_today = 50
         publisher.account_state.max_uploads_per_day = 50
         # Set reset time to tomorrow so it doesn't auto-reset
-        tomorrow = datetime.now(timezone.utc) + timedelta(days=1)
+        tomorrow = datetime.now(UTC) + timedelta(days=1)
         publisher.account_state.uploads_reset_at = tomorrow
 
         with pytest.raises(ValueError, match="Daily upload limit reached"):
@@ -194,7 +194,7 @@ class TestYouTubePublisher:
     def test_check_rate_limit_resets_new_day(self, publisher):
         """Test rate limit resets on new day."""
         # Set reset time to yesterday
-        yesterday = datetime.now(timezone.utc) - timedelta(days=1)
+        yesterday = datetime.now(UTC) - timedelta(days=1)
         publisher.account_state.uploads_today = 50
         publisher.account_state.uploads_reset_at = yesterday
 
@@ -299,7 +299,7 @@ class TestEncryption:
 
     def test_encrypt_decrypt_roundtrip(self):
         """Test that encryption and decryption work correctly."""
-        from shorts_engine.services.encryption import encrypt_token, decrypt_token
+        from shorts_engine.services.encryption import decrypt_token, encrypt_token
 
         original = "my_secret_token_12345"
         encrypted = encrypt_token(original)
@@ -313,21 +313,21 @@ class TestEncryption:
 
     def test_encrypt_empty_fails(self):
         """Test that encrypting empty string fails."""
-        from shorts_engine.services.encryption import encrypt_token, EncryptionError
+        from shorts_engine.services.encryption import EncryptionError, encrypt_token
 
         with pytest.raises(EncryptionError, match="Cannot encrypt empty token"):
             encrypt_token("")
 
     def test_decrypt_empty_fails(self):
         """Test that decrypting empty string fails."""
-        from shorts_engine.services.encryption import decrypt_token, EncryptionError
+        from shorts_engine.services.encryption import EncryptionError, decrypt_token
 
         with pytest.raises(EncryptionError, match="Cannot decrypt empty token"):
             decrypt_token("")
 
     def test_decrypt_invalid_fails(self):
         """Test that decrypting invalid data fails."""
-        from shorts_engine.services.encryption import decrypt_token, EncryptionError
+        from shorts_engine.services.encryption import EncryptionError, decrypt_token
 
         with pytest.raises(EncryptionError):
             decrypt_token("not_valid_encrypted_data")

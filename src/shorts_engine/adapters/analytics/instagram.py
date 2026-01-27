@@ -1,9 +1,7 @@
 """Instagram Analytics adapter using Instagram Graph API Insights."""
 
-import asyncio
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
-from typing import Any
+from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
 import httpx
@@ -18,8 +16,8 @@ from shorts_engine.domain.enums import Platform
 from shorts_engine.logging import get_logger
 from shorts_engine.services.accounts import (
     get_account_state,
-    update_account_tokens,
     mark_account_revoked,
+    update_account_tokens,
 )
 
 logger = get_logger(__name__)
@@ -77,22 +75,24 @@ class InstagramAnalyticsAdapter(AnalyticsAdapter):
             account_state = get_account_state(session, self.account_id)
 
             # Check if token needs refresh (7 days before expiry)
-            if account_state.token_expires_at:
-                if account_state.token_expires_at < datetime.now(timezone.utc) + timedelta(days=7):
-                    logger.debug("instagram_token_refresh", account_id=str(self.account_id))
-                    try:
-                        token_data = refresh_instagram_token(account_state.access_token)
-                        new_expires = datetime.now(timezone.utc) + timedelta(
-                            seconds=token_data.get("expires_in", 5184000)
-                        )
-                        update_account_tokens(
-                            session, self.account_id, token_data["access_token"], new_expires
-                        )
-                        return token_data["access_token"]
-                    except InstagramOAuthError as e:
-                        if "expired" in str(e).lower():
-                            mark_account_revoked(session, self.account_id, str(e))
-                        raise
+            if (
+                account_state.token_expires_at
+                and account_state.token_expires_at < datetime.now(UTC) + timedelta(days=7)
+            ):
+                logger.debug("instagram_token_refresh", account_id=str(self.account_id))
+                try:
+                    token_data = refresh_instagram_token(account_state.access_token)
+                    new_expires = datetime.now(UTC) + timedelta(
+                        seconds=token_data.get("expires_in", 5184000)
+                    )
+                    update_account_tokens(
+                        session, self.account_id, token_data["access_token"], new_expires
+                    )
+                    return str(token_data["access_token"])
+                except InstagramOAuthError as e:
+                    if "expired" in str(e).lower():
+                        mark_account_revoked(session, self.account_id, str(e))
+                    raise
 
             return account_state.access_token
 
@@ -159,7 +159,7 @@ class InstagramAnalyticsAdapter(AnalyticsAdapter):
         return MetricsSnapshot(
             platform=self.platform,
             platform_video_id=platform_video_id,
-            fetched_at=datetime.now(timezone.utc),
+            fetched_at=datetime.now(UTC),
             views=views,
             likes=likes,
             comments_count=comments,
@@ -191,7 +191,7 @@ class InstagramAnalyticsAdapter(AnalyticsAdapter):
         Returns:
             List of WindowedMetrics (currently just lifetime metrics).
         """
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         windows = []
 
         # Fetch current metrics as "lifetime"
@@ -217,8 +217,8 @@ class InstagramAnalyticsAdapter(AnalyticsAdapter):
     async def fetch_historical_metrics(
         self,
         platform_video_id: str,
-        start_date: datetime,
-        end_date: datetime,
+        _start_date: datetime,
+        _end_date: datetime,
     ) -> list[MetricsSnapshot]:
         """Fetch historical metrics for a date range.
 

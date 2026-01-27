@@ -13,36 +13,34 @@ All tasks support:
 """
 
 import hashlib
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 from uuid import UUID, uuid4
 
 from celery import chain, group
-from celery.exceptions import MaxRetriesExceededError
 from sqlalchemy import select
-from sqlalchemy.orm import Session
 
-from shorts_engine.adapters.video_gen.base import VideoGenRequest
+from shorts_engine.adapters.video_gen.base import VideoGenProvider, VideoGenRequest
 from shorts_engine.adapters.video_gen.luma import LumaProvider
 from shorts_engine.adapters.video_gen.stub import StubVideoGenProvider
 from shorts_engine.config import settings
-from shorts_engine.db.models import AssetModel, ProjectModel, PromptModel, SceneModel, VideoJobModel
+from shorts_engine.db.models import AssetModel, PromptModel, SceneModel, VideoJobModel
 from shorts_engine.db.session import get_session_context
 from shorts_engine.domain.enums import QACheckType, QAStage, QAStatus
 from shorts_engine.logging import get_logger
 from shorts_engine.presets.styles import get_preset
 from shorts_engine.services.alerting import alert_pipeline_failure, alert_qa_failure
 from shorts_engine.services.metrics import (
+    estimate_planning_cost,
+    record_cost_estimate,
     record_job_completed,
     record_job_failed,
     record_job_started,
     record_qa_check,
-    record_cost_estimate,
-    estimate_planning_cost,
 )
 from shorts_engine.services.planner import PlannerService
-from shorts_engine.services.qa import QAService, QAFailedException
+from shorts_engine.services.qa import QAFailedException, QAService
 from shorts_engine.services.storage import StorageService
 from shorts_engine.utils import run_async
 from shorts_engine.worker import celery_app
@@ -56,7 +54,7 @@ def generate_idempotency_key(project_id: str, idea: str, preset: str) -> str:
     return hashlib.sha256(content.encode()).hexdigest()[:32]
 
 
-def get_video_gen_provider():
+def get_video_gen_provider() -> VideoGenProvider:
     """Get the configured video generation provider."""
     provider = getattr(settings, "video_gen_provider", "stub").lower()
 
@@ -81,7 +79,7 @@ def get_video_gen_provider():
     retry_backoff_max=300,
 )
 def plan_job_task(
-    self,
+    self: Any,  # noqa: ARG001 - used for self.request.id
     video_job_id: str,
 ) -> dict[str, Any]:
     """Generate a video plan using the LLM planner.
@@ -98,7 +96,7 @@ def plan_job_task(
     """
     task_id = self.request.id
     job_uuid = UUID(video_job_id)
-    start_time = datetime.now(timezone.utc)
+    start_time = datetime.now(UTC)
 
     logger.info("plan_job_started", task_id=task_id, video_job_id=video_job_id)
 
@@ -112,8 +110,9 @@ def plan_job_task(
         record_job_started(session, job_uuid, "planning")
 
         # Idempotency check - skip if already planned and QA passed
-        if job.stage in ("planned", "generating", "verifying", "ready"):
-            if job.qa_status == QAStatus.PASSED or not settings.qa_enabled:
+        if job.stage in ("planned", "generating", "verifying", "ready") and (
+            job.qa_status == QAStatus.PASSED or not settings.qa_enabled
+        ):
                 logger.info("plan_job_already_done", video_job_id=video_job_id, stage=job.stage)
                 scene_ids = [str(s.id) for s in job.scenes]
                 return {
@@ -160,7 +159,7 @@ def plan_job_task(
 
             # Create scenes
             scene_ids = []
-            preset = get_preset(job.style_preset)
+            _preset = get_preset(job.style_preset)  # May be used for validation in the future
 
             for scene_plan in plan.scenes:
                 scene = SceneModel(
@@ -229,17 +228,19 @@ def plan_job_task(
                         record_job_failed(session, job_uuid, "planning", "qa_failed")
 
                         # Send alert
-                        run_async(alert_qa_failure(
-                            video_job_id=job_uuid,
-                            qa_stage="post_planning",
-                            feedback=qa_result.feedback,
-                            attempt=job.qa_attempts,
-                            max_attempts=settings.qa_max_regeneration_attempts,
-                            scores={
-                                "hook_clarity": qa_result.hook_clarity_score,
-                                "coherence": qa_result.coherence_score,
-                            },
-                        ))
+                        run_async(
+                            alert_qa_failure(
+                                video_job_id=job_uuid,
+                                qa_stage="post_planning",
+                                feedback=qa_result.feedback,
+                                attempt=job.qa_attempts,
+                                max_attempts=settings.qa_max_regeneration_attempts,
+                                scores={
+                                    "hook_clarity": qa_result.hook_clarity_score,  # type: ignore[dict-item]
+                                    "coherence": qa_result.coherence_score,  # type: ignore[dict-item]
+                                },
+                            )
+                        )
 
                         logger.error(
                             "plan_job_qa_failed_permanently",
@@ -281,7 +282,7 @@ def plan_job_task(
             job.stage = "planned"
 
             # Record success metrics
-            duration = (datetime.now(timezone.utc) - start_time).total_seconds()
+            duration = (datetime.now(UTC) - start_time).total_seconds()
             record_job_completed(session, job_uuid, "planning", duration)
             record_cost_estimate(session, job_uuid, estimate_planning_cost())
 
@@ -318,12 +319,14 @@ def plan_job_task(
             record_job_failed(session, job_uuid, "planning", type(e).__name__)
 
             # Send alert for pipeline failure
-            run_async(alert_pipeline_failure(
-                video_job_id=job_uuid,
-                stage="planning",
-                error_message=str(e),
-                error_type=type(e).__name__,
-            ))
+            run_async(
+                alert_pipeline_failure(
+                    video_job_id=job_uuid,
+                    stage="planning",
+                    error_message=str(e),
+                    error_type=type(e).__name__,
+                )
+            )
 
             raise
 
@@ -343,7 +346,7 @@ def plan_job_task(
     retry_backoff_max=600,
 )
 def generate_scene_clip_task(
-    self,
+    self: Any,
     scene_id: str,
     video_job_id: str,
 ) -> dict[str, Any]:
@@ -445,7 +448,7 @@ def generate_scene_clip_task(
                         scene_id=scene_uuid,
                         metadata={
                             "provider": provider.name,
-                            "generation_id": result.metadata.get("generation_id"),
+                            "generation_id": result.metadata.get("generation_id") if result.metadata else None,
                         },
                     )
                 )
@@ -523,7 +526,7 @@ def generate_scene_clip_task(
     name="pipeline.generate_all_scenes",
 )
 def generate_all_scenes_task(
-    self,
+    _self: Any,  # noqa: ARG001
     video_job_id: str,
     scene_ids: list[str],
 ) -> dict[str, Any]:
@@ -597,7 +600,7 @@ def generate_all_scenes_task(
     default_retry_delay=30,
 )
 def verify_assets_task(
-    self,
+    self: Any,
     video_job_id: str,
 ) -> dict[str, Any]:
     """Verify all scene assets are ready.
@@ -622,11 +625,15 @@ def verify_assets_task(
         session.commit()
 
         # Check all scenes have assets
-        scenes = session.execute(
-            select(SceneModel).where(SceneModel.video_job_id == job_uuid).order_by(
-                SceneModel.scene_number
+        scenes = (
+            session.execute(
+                select(SceneModel)
+                .where(SceneModel.video_job_id == job_uuid)
+                .order_by(SceneModel.scene_number)
             )
-        ).scalars().all()
+            .scalars()
+            .all()
+        )
 
         storage = StorageService()
         verified_assets = []
@@ -641,19 +648,23 @@ def verify_assets_task(
             ).scalar_one_or_none()
 
             if not asset:
-                failed_assets.append({
-                    "scene_id": str(scene.id),
-                    "scene_number": scene.scene_number,
-                    "error": "No asset found",
-                })
+                failed_assets.append(
+                    {
+                        "scene_id": str(scene.id),
+                        "scene_number": scene.scene_number,
+                        "error": "No asset found",
+                    }
+                )
                 continue
 
             if asset.status != "ready":
-                failed_assets.append({
-                    "scene_id": str(scene.id),
-                    "scene_number": scene.scene_number,
-                    "error": f"Asset status: {asset.status}",
-                })
+                failed_assets.append(
+                    {
+                        "scene_id": str(scene.id),
+                        "scene_number": scene.scene_number,
+                        "error": f"Asset status: {asset.status}",
+                    }
+                )
                 continue
 
             # Verify asset is accessible
@@ -674,18 +685,22 @@ def verify_assets_task(
             is_valid = run_async(storage.verify_asset(stored))
 
             if is_valid:
-                verified_assets.append({
-                    "scene_id": str(scene.id),
-                    "scene_number": scene.scene_number,
-                    "asset_id": str(asset.id),
-                    "url": asset.url or f"file://{asset.file_path}",
-                })
+                verified_assets.append(
+                    {
+                        "scene_id": str(scene.id),
+                        "scene_number": scene.scene_number,
+                        "asset_id": str(asset.id),
+                        "url": asset.url or f"file://{asset.file_path}",
+                    }
+                )
             else:
-                failed_assets.append({
-                    "scene_id": str(scene.id),
-                    "scene_number": scene.scene_number,
-                    "error": "Asset verification failed",
-                })
+                failed_assets.append(
+                    {
+                        "scene_id": str(scene.id),
+                        "scene_number": scene.scene_number,
+                        "error": "Asset verification failed",
+                    }
+                )
 
         all_verified = len(failed_assets) == 0 and len(verified_assets) == len(scenes)
 
@@ -715,7 +730,7 @@ def verify_assets_task(
     name="pipeline.mark_ready_for_render",
 )
 def mark_ready_for_render_task(
-    self,
+    self: Any,  # noqa: ARG001
     video_job_id: str,
     verification_result: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
@@ -742,7 +757,9 @@ def mark_ready_for_render_task(
         if verification_result and not verification_result.get("success"):
             job.status = "failed"
             job.stage = "verification_failed"
-            job.error_message = f"Asset verification failed: {verification_result.get('failed_assets')}"
+            job.error_message = (
+                f"Asset verification failed: {verification_result.get('failed_assets')}"
+            )
             session.commit()
 
             return {
@@ -755,17 +772,21 @@ def mark_ready_for_render_task(
         # Mark as ready
         job.status = "completed"
         job.stage = "ready"
-        job.completed_at = datetime.now(timezone.utc)
+        job.completed_at = datetime.now(UTC)
         session.commit()
 
         # Collect final asset URLs
-        assets = session.execute(
-            select(AssetModel).where(
-                AssetModel.video_job_id == job_uuid,
-                AssetModel.asset_type == "scene_clip",
-                AssetModel.status == "ready",
+        assets = (
+            session.execute(
+                select(AssetModel).where(
+                    AssetModel.video_job_id == job_uuid,
+                    AssetModel.asset_type == "scene_clip",
+                    AssetModel.status == "ready",
+                )
             )
-        ).scalars().all()
+            .scalars()
+            .all()
+        )
 
         asset_urls = [
             {
@@ -803,7 +824,7 @@ def mark_ready_for_render_task(
     name="pipeline.run_full_pipeline",
 )
 def run_full_pipeline_task(
-    self,
+    self: Any,  # noqa: ARG001
     project_id: str,
     idea: str,
     style_preset: str,
@@ -897,7 +918,7 @@ def run_full_pipeline_task(
     name="pipeline.generate_all_scenes_from_plan",
 )
 def generate_all_scenes_from_plan(
-    self,
+    _self: Any,  # noqa: ARG001
     plan_result: dict[str, Any],
     video_job_id: str,
 ) -> str:
@@ -913,12 +934,10 @@ def generate_all_scenes_from_plan(
         raise RuntimeError("No scenes in plan result")
 
     # Dispatch generation for all scenes
-    result = generate_all_scenes_task.apply_async(
-        args=[video_job_id, scene_ids]
-    )
+    result = generate_all_scenes_task.apply_async(args=[video_job_id, scene_ids])
 
     # Wait for completion
-    gen_result = result.get(timeout=3600)
+    result.get(timeout=3600)
 
     # Return video_job_id for next stage
     return video_job_id

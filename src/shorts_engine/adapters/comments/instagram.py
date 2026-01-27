@@ -1,12 +1,13 @@
 """Instagram Comments adapter using Instagram Graph API."""
 
-from datetime import datetime, timedelta, timezone
+import contextlib
+from datetime import UTC, datetime, timedelta
 from typing import Any
 from uuid import UUID
 
 import httpx
 
-from shorts_engine.adapters.comments.base import CommentsAdapter, CommentData
+from shorts_engine.adapters.comments.base import CommentData, CommentsAdapter
 from shorts_engine.adapters.publisher.instagram_oauth import (
     InstagramOAuthError,
     refresh_instagram_token,
@@ -16,8 +17,8 @@ from shorts_engine.domain.enums import Platform
 from shorts_engine.logging import get_logger
 from shorts_engine.services.accounts import (
     get_account_state,
-    update_account_tokens,
     mark_account_revoked,
+    update_account_tokens,
 )
 
 logger = get_logger(__name__)
@@ -65,22 +66,24 @@ class InstagramCommentsAdapter(CommentsAdapter):
             account_state = get_account_state(session, self.account_id)
 
             # Check if token needs refresh (7 days before expiry)
-            if account_state.token_expires_at:
-                if account_state.token_expires_at < datetime.now(timezone.utc) + timedelta(days=7):
-                    logger.debug("instagram_token_refresh", account_id=str(self.account_id))
-                    try:
-                        token_data = refresh_instagram_token(account_state.access_token)
-                        new_expires = datetime.now(timezone.utc) + timedelta(
-                            seconds=token_data.get("expires_in", 5184000)
-                        )
-                        update_account_tokens(
-                            session, self.account_id, token_data["access_token"], new_expires
-                        )
-                        return token_data["access_token"]
-                    except InstagramOAuthError as e:
-                        if "expired" in str(e).lower():
-                            mark_account_revoked(session, self.account_id, str(e))
-                        raise
+            if (
+                account_state.token_expires_at
+                and account_state.token_expires_at < datetime.now(UTC) + timedelta(days=7)
+            ):
+                logger.debug("instagram_token_refresh", account_id=str(self.account_id))
+                try:
+                    token_data = refresh_instagram_token(account_state.access_token)
+                    new_expires = datetime.now(UTC) + timedelta(
+                        seconds=token_data.get("expires_in", 5184000)
+                    )
+                    update_account_tokens(
+                        session, self.account_id, token_data["access_token"], new_expires
+                    )
+                    return str(token_data["access_token"])
+                except InstagramOAuthError as e:
+                    if "expired" in str(e).lower():
+                        mark_account_revoked(session, self.account_id, str(e))
+                    raise
 
             return account_state.access_token
 
@@ -103,7 +106,7 @@ class InstagramCommentsAdapter(CommentsAdapter):
         access_token = await self._get_access_token()
         client = await self._get_client()
 
-        comments = []
+        comments: list[CommentData] = []
         after_cursor = None
 
         while len(comments) < max_results:
@@ -154,12 +157,8 @@ class InstagramCommentsAdapter(CommentsAdapter):
                 # Parse timestamp
                 posted_at = None
                 if item.get("timestamp"):
-                    try:
-                        posted_at = datetime.fromisoformat(
-                            item["timestamp"].replace("Z", "+00:00")
-                        )
-                    except ValueError:
-                        pass
+                    with contextlib.suppress(ValueError):
+                        posted_at = datetime.fromisoformat(item["timestamp"].replace("Z", "+00:00"))
 
                 # Filter by since timestamp
                 if since and posted_at and posted_at < since:
@@ -185,12 +184,10 @@ class InstagramCommentsAdapter(CommentsAdapter):
                 for reply in item.get("replies", {}).get("data", []):
                     reply_posted_at = None
                     if reply.get("timestamp"):
-                        try:
+                        with contextlib.suppress(ValueError):
                             reply_posted_at = datetime.fromisoformat(
                                 reply["timestamp"].replace("Z", "+00:00")
                             )
-                        except ValueError:
-                            pass
 
                     if since and reply_posted_at and reply_posted_at < since:
                         continue
@@ -274,7 +271,7 @@ class InstagramCommentsAdapter(CommentsAdapter):
             author=None,  # Our account
             text=text,
             likes=0,
-            posted_at=datetime.now(timezone.utc),
+            posted_at=datetime.now(UTC),
             reply_to=platform_comment_id,
             raw_data={"is_our_reply": True},
         )

@@ -1,10 +1,9 @@
 """Tests for domain models."""
 
-import pytest
 from uuid import UUID
 
-from shorts_engine.domain.models import Video, VideoRequest, Job
-from shorts_engine.domain.enums import VideoStatus, JobStatus, JobType
+from shorts_engine.domain.enums import JobStatus, JobType, VideoStatus
+from shorts_engine.domain.models import Job, Video, VideoRequest
 
 
 def test_video_request_creation() -> None:

@@ -1,6 +1,5 @@
 """FastAPI dependencies."""
 
-from collections.abc import Generator
 from typing import Annotated
 
 from fastapi import Depends

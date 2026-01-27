@@ -4,27 +4,23 @@ Handles video uploads, scheduling, and status tracking for YouTube Shorts.
 """
 
 import logging
-import os
-import tempfile
-from dataclasses import dataclass, field
-from datetime import datetime, timedelta, timezone
+from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
-from uuid import UUID
 
 import httpx
 
 from shorts_engine.adapters.publisher.base import (
+    PublisherAdapter,
     PublishRequest,
     PublishResponse,
-    PublisherAdapter,
 )
 from shorts_engine.adapters.publisher.youtube_oauth import (
     OAuthError,
     refresh_access_token,
 )
 from shorts_engine.domain.enums import Platform
-from shorts_engine.services.encryption import decrypt_token, encrypt_token
 
 logger = logging.getLogger(__name__)
 
@@ -55,7 +51,7 @@ class YouTubeUploadResult:
 
 
 # Import account state from domain to avoid circular imports
-from shorts_engine.domain.account_state import YouTubeAccountState
+from shorts_engine.domain.account_state import YouTubeAccountState  # noqa: E402
 
 
 class YouTubePublisher(PublisherAdapter):
@@ -108,7 +104,7 @@ class YouTubePublisher(PublisherAdapter):
             raise OAuthError("No account credentials configured")
 
         # Check if token needs refresh
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         if (
             self.account_state.token_expires_at
             and self.account_state.token_expires_at > now + timedelta(minutes=5)
@@ -137,18 +133,15 @@ class YouTubePublisher(PublisherAdapter):
         if not self.account_state:
             return
 
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
 
         # Reset counter if it's a new day
-        if (
-            self.account_state.uploads_reset_at is None
-            or self.account_state.uploads_reset_at < now
-        ):
+        if self.account_state.uploads_reset_at is None or self.account_state.uploads_reset_at < now:
             self.account_state.uploads_today = 0
             # Reset at midnight UTC
             tomorrow = now.date() + timedelta(days=1)
             self.account_state.uploads_reset_at = datetime(
-                tomorrow.year, tomorrow.month, tomorrow.day, tzinfo=timezone.utc
+                tomorrow.year, tomorrow.month, tomorrow.day, tzinfo=UTC
             )
 
         if self.account_state.uploads_today >= self.account_state.max_uploads_per_day:
@@ -171,17 +164,13 @@ class YouTubePublisher(PublisherAdapter):
 
         # Description length
         if request.description and len(request.description) > MAX_DESCRIPTION_LENGTH:
-            warnings.append(
-                f"Description will be truncated (max {MAX_DESCRIPTION_LENGTH} chars)"
-            )
+            warnings.append(f"Description will be truncated (max {MAX_DESCRIPTION_LENGTH} chars)")
 
         # Tags total length
         if request.tags:
             total_tag_length = sum(len(t) for t in request.tags)
             if total_tag_length > MAX_TAGS_TOTAL_LENGTH:
-                warnings.append(
-                    f"Tags may be truncated (total max {MAX_TAGS_TOTAL_LENGTH} chars)"
-                )
+                warnings.append(f"Tags may be truncated (total max {MAX_TAGS_TOTAL_LENGTH} chars)")
 
         return warnings
 
@@ -209,7 +198,7 @@ class YouTubePublisher(PublisherAdapter):
             publish_at = scheduled_time.isoformat()
 
         # Build snippet
-        snippet = {
+        snippet: dict[str, Any] = {
             "title": request.title[:MAX_TITLE_LENGTH],
             "categoryId": "22",  # People & Blogs (good default for Shorts)
         }
@@ -375,18 +364,18 @@ class YouTubePublisher(PublisherAdapter):
 
         # Metadata part
         body_parts.append(f"--{boundary}")
-        body_parts.append('Content-Type: application/json; charset=UTF-8')
-        body_parts.append('')
+        body_parts.append("Content-Type: application/json; charset=UTF-8")
+        body_parts.append("")
         body_parts.append(json.dumps(metadata))
 
         # Video part
         body_parts.append(f"--{boundary}")
-        body_parts.append('Content-Type: video/mp4')
-        body_parts.append('Content-Transfer-Encoding: binary')
-        body_parts.append('')
+        body_parts.append("Content-Type: video/mp4")
+        body_parts.append("Content-Transfer-Encoding: binary")
+        body_parts.append("")
 
         # Combine text parts
-        text_body = '\r\n'.join(body_parts) + '\r\n'
+        text_body = "\r\n".join(body_parts) + "\r\n"
         final_boundary = f"\r\n--{boundary}--"
 
         # Build full body
@@ -415,7 +404,6 @@ class YouTubePublisher(PublisherAdapter):
         access_token: str,
     ) -> YouTubeUploadResult:
         """Resumable upload for larger videos."""
-        import json
 
         file_size = video_path.stat().st_size
 
@@ -513,7 +501,7 @@ class YouTubePublisher(PublisherAdapter):
     def _safe_json(self, response: httpx.Response) -> dict[str, Any] | None:
         """Safely parse JSON response."""
         try:
-            return response.json()
+            return response.json()  # type: ignore[no-any-return]
         except Exception:
             return None
 
@@ -546,7 +534,7 @@ class YouTubePublisher(PublisherAdapter):
         if not items:
             raise ValueError(f"Video not found: {platform_video_id}")
 
-        return items[0]
+        return items[0]  # type: ignore[no-any-return]
 
     async def delete_video(self, platform_video_id: str) -> bool:
         """Delete a video from YouTube."""
@@ -584,7 +572,7 @@ class YouTubePublisher(PublisherAdapter):
             logger.warning(f"YouTube health check failed: {e}")
             return False
 
-    def __del__(self):
+    def __del__(self) -> None:
         """Clean up HTTP client."""
         if self._client:
             self._client.close()

@@ -1,6 +1,5 @@
 """Monitoring and dashboard endpoints for operational visibility."""
 
-from typing import Any
 
 from fastapi import APIRouter, Depends, Query, status
 from pydantic import BaseModel, Field
@@ -8,7 +7,7 @@ from sqlalchemy.orm import Session
 
 from shorts_engine.db.session import get_session
 from shorts_engine.logging import get_logger
-from shorts_engine.services.metrics import DashboardMetrics, estimate_total_cost
+from shorts_engine.services.metrics import DashboardMetrics
 
 router = APIRouter(prefix="/monitoring", tags=["Monitoring"])
 logger = get_logger(__name__)
@@ -106,9 +105,7 @@ async def get_success_rates(
     rates_data = metrics.get_success_rates(hours)
 
     # Convert to response model
-    rates = {
-        stage: SuccessRateItem(**data) for stage, data in rates_data.items()
-    }
+    rates = {stage: SuccessRateItem(**data) for stage, data in rates_data.items()}
 
     return SuccessRatesResponse(rates=rates, time_window_hours=hours)
 
@@ -195,8 +192,7 @@ async def get_dashboard_summary(
 
     # Convert nested dicts to response models
     success_rates = {
-        stage: SuccessRateItem(**data)
-        for stage, data in summary["success_rates"].items()
+        stage: SuccessRateItem(**data) for stage, data in summary["success_rates"].items()
     }
 
     cost_summary = CostSummaryResponse(

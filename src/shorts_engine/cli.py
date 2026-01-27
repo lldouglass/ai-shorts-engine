@@ -1,6 +1,6 @@
 """Command-line interface using Typer."""
 
-from typing import Optional
+from datetime import UTC
 from uuid import UUID
 
 import typer
@@ -101,13 +101,17 @@ def smoke() -> None:
 @app.command()
 def generate(
     prompt: str = typer.Argument(..., help="The prompt for video generation"),
-    title: Optional[str] = typer.Option(None, "--title", "-t", help="Video title"),
+    title: str | None = typer.Option(None, "--title", "-t", help="Video title"),
     duration: int = typer.Option(60, "--duration", "-d", help="Duration in seconds"),
     wait: bool = typer.Option(False, "--wait", "-w", help="Wait for completion"),
 ) -> None:
     """Generate a video from a prompt."""
-    console.print(f"[bold blue]Generating video...[/bold blue]")
-    console.print(f"[dim]Prompt: {prompt[:100]}...[/dim]" if len(prompt) > 100 else f"[dim]Prompt: {prompt}[/dim]")
+    console.print("[bold blue]Generating video...[/bold blue]")
+    console.print(
+        f"[dim]Prompt: {prompt[:100]}...[/dim]"
+        if len(prompt) > 100
+        else f"[dim]Prompt: {prompt}[/dim]"
+    )
 
     try:
         from shorts_engine.jobs.tasks import generate_video_task
@@ -127,7 +131,9 @@ def generate(
                 console.print("[bold green]✓ Video generated successfully![/bold green]")
                 console.print(f"Title: {task_result.get('title')}")
             else:
-                console.print(f"[bold red]✗ Generation failed: {task_result.get('error')}[/bold red]")
+                console.print(
+                    f"[bold red]✗ Generation failed: {task_result.get('error')}[/bold red]"
+                )
                 raise typer.Exit(code=1)
 
     except Exception as e:
@@ -272,14 +278,16 @@ def shorts_create(
 
         project_name = project_record.name
 
-    console.print(Panel.fit(
-        f"[bold]Creating Short Video[/bold]\n\n"
-        f"[cyan]Project:[/cyan] {project_name}\n"
-        f"[cyan]Preset:[/cyan] {preset_upper}\n"
-        f"[cyan]Idea:[/cyan] {idea[:100]}{'...' if len(idea) > 100 else ''}",
-        title="Video Creation Pipeline",
-        border_style="blue",
-    ))
+    console.print(
+        Panel.fit(
+            f"[bold]Creating Short Video[/bold]\n\n"
+            f"[cyan]Project:[/cyan] {project_name}\n"
+            f"[cyan]Preset:[/cyan] {preset_upper}\n"
+            f"[cyan]Idea:[/cyan] {idea[:100]}{'...' if len(idea) > 100 else ''}",
+            title="Video Creation Pipeline",
+            border_style="blue",
+        )
+    )
 
     try:
         from shorts_engine.jobs.video_pipeline import run_full_pipeline_task
@@ -291,7 +299,7 @@ def shorts_create(
             style_preset=preset_upper,
         )
 
-        console.print(f"\n[green]Pipeline enqueued successfully![/green]")
+        console.print("\n[green]Pipeline enqueued successfully![/green]")
         console.print(f"[dim]Task ID: {result.id}[/dim]")
 
         if wait:
@@ -318,12 +326,16 @@ def shorts_create(
                 if job_id:
                     _show_job_details(job_id)
             else:
-                console.print(f"\n[bold red]Pipeline failed![/bold red]")
+                console.print("\n[bold red]Pipeline failed![/bold red]")
                 console.print(f"[red]{task_result.get('error', 'Unknown error')}[/red]")
                 raise typer.Exit(code=1)
         else:
-            console.print(f"\n[dim]Use 'shorts-engine shorts status {result.id}' to check progress[/dim]")
-            console.print(f"[dim]Or 'shorts-engine shorts job <video_job_id>' to see job details[/dim]")
+            console.print(
+                f"\n[dim]Use 'shorts-engine shorts status {result.id}' to check progress[/dim]"
+            )
+            console.print(
+                "[dim]Or 'shorts-engine shorts job <video_job_id>' to see job details[/dim]"
+            )
 
     except Exception as e:
         console.print(f"[bold red]Error: {e}[/bold red]")
@@ -332,25 +344,32 @@ def shorts_create(
 
 def _show_job_details(job_id: str) -> None:
     """Display detailed job information."""
+    from sqlalchemy import select
+
     from shorts_engine.db.models import AssetModel, SceneModel, VideoJobModel
     from shorts_engine.db.session import get_session_context
-    from sqlalchemy import select
 
     with get_session_context() as session:
         job = session.get(VideoJobModel, UUID(job_id))
         if not job:
             return
 
-        console.print(f"\n[bold]Video Job Details[/bold]")
+        console.print("\n[bold]Video Job Details[/bold]")
         console.print(f"[cyan]Title:[/cyan] {job.title or 'Untitled'}")
         console.print(f"[cyan]Description:[/cyan] {(job.description or 'N/A')[:200]}")
         console.print(f"[cyan]Status:[/cyan] {job.status}")
         console.print(f"[cyan]Stage:[/cyan] {job.stage}")
 
         # Show scenes
-        scenes = session.execute(
-            select(SceneModel).where(SceneModel.video_job_id == job.id).order_by(SceneModel.scene_number)
-        ).scalars().all()
+        scenes = (
+            session.execute(
+                select(SceneModel)
+                .where(SceneModel.video_job_id == job.id)
+                .order_by(SceneModel.scene_number)
+            )
+            .scalars()
+            .all()
+        )
 
         if scenes:
             console.print(f"\n[bold]Scenes ({len(scenes)})[/bold]")
@@ -371,12 +390,16 @@ def _show_job_details(job_id: str) -> None:
             console.print(scene_table)
 
         # Show assets
-        assets = session.execute(
-            select(AssetModel).where(
-                AssetModel.video_job_id == job.id,
-                AssetModel.status == "ready",
+        assets = (
+            session.execute(
+                select(AssetModel).where(
+                    AssetModel.video_job_id == job.id,
+                    AssetModel.status == "ready",
+                )
             )
-        ).scalars().all()
+            .scalars()
+            .all()
+        )
 
         if assets:
             console.print(f"\n[bold]Assets ({len(assets)})[/bold]")
@@ -391,6 +414,7 @@ def shorts_status(
 ) -> None:
     """Check the status of a video creation pipeline task."""
     from celery.result import AsyncResult
+
     from shorts_engine.worker import celery_app
 
     result = AsyncResult(task_id, app=celery_app)
@@ -436,13 +460,14 @@ def shorts_job(
 
 @shorts_app.command("list")
 def shorts_list(
-    project: Optional[str] = typer.Option(None, "--project", "-p", help="Filter by project ID"),
+    project: str | None = typer.Option(None, "--project", "-p", help="Filter by project ID"),
     limit: int = typer.Option(20, "--limit", "-n", help="Number of jobs to show"),
 ) -> None:
     """List recent video jobs."""
+    from sqlalchemy import select
+
     from shorts_engine.db.models import VideoJobModel
     from shorts_engine.db.session import get_session_context
-    from sqlalchemy import select
 
     with get_session_context() as session:
         query = select(VideoJobModel).order_by(VideoJobModel.created_at.desc()).limit(limit)
@@ -487,8 +512,8 @@ def shorts_render(
     job_id: str = typer.Option(..., "--job", "-j", help="Video job ID (UUID) to render"),
     voiceover: bool = typer.Option(True, "--voiceover/--no-voiceover", help="Generate voiceover"),
     captions: bool = typer.Option(True, "--captions/--no-captions", help="Burn in captions"),
-    voice: Optional[str] = typer.Option(None, "--voice", "-v", help="Voice ID for voiceover"),
-    music_url: Optional[str] = typer.Option(None, "--music", "-m", help="Background music URL"),
+    voice: str | None = typer.Option(None, "--voice", "-v", help="Voice ID for voiceover"),
+    music_url: str | None = typer.Option(None, "--music", "-m", help="Background music URL"),
     wait: bool = typer.Option(False, "--wait", "-w", help="Wait for render completion"),
 ) -> None:
     """Render a final video from a completed job.
@@ -520,22 +545,26 @@ def shorts_render(
         # Check job stage
         valid_stages = ("ready", "planned", "generated", "verified", "ready_for_render")
         if job.stage not in valid_stages and job.status != "completed":
-            console.print(f"[bold yellow]Warning: Job stage is '{job.stage}', status is '{job.status}'[/bold yellow]")
+            console.print(
+                f"[bold yellow]Warning: Job stage is '{job.stage}', status is '{job.status}'[/bold yellow]"
+            )
             console.print("[dim]The job may not have completed scene generation yet.[/dim]")
 
         job_title = job.title or "Untitled"
 
-    console.print(Panel.fit(
-        f"[bold]Rendering Final Video[/bold]\n\n"
-        f"[cyan]Job:[/cyan] {job_title}\n"
-        f"[cyan]Job ID:[/cyan] {job_id}\n"
-        f"[cyan]Voiceover:[/cyan] {'Yes' if voiceover else 'No'}\n"
-        f"[cyan]Captions:[/cyan] {'Yes' if captions else 'No'}\n"
-        f"[cyan]Voice:[/cyan] {voice or 'default'}\n"
-        f"[cyan]Music:[/cyan] {music_url or 'None'}",
-        title="Render Pipeline",
-        border_style="green",
-    ))
+    console.print(
+        Panel.fit(
+            f"[bold]Rendering Final Video[/bold]\n\n"
+            f"[cyan]Job:[/cyan] {job_title}\n"
+            f"[cyan]Job ID:[/cyan] {job_id}\n"
+            f"[cyan]Voiceover:[/cyan] {'Yes' if voiceover else 'No'}\n"
+            f"[cyan]Captions:[/cyan] {'Yes' if captions else 'No'}\n"
+            f"[cyan]Voice:[/cyan] {voice or 'default'}\n"
+            f"[cyan]Music:[/cyan] {music_url or 'None'}",
+            title="Render Pipeline",
+            border_style="green",
+        )
+    )
 
     try:
         from shorts_engine.jobs.render_pipeline import run_render_pipeline_task
@@ -549,7 +578,7 @@ def shorts_render(
             background_music_url=music_url,
         )
 
-        console.print(f"\n[green]Render pipeline enqueued successfully![/green]")
+        console.print("\n[green]Render pipeline enqueued successfully![/green]")
         console.print(f"[dim]Task ID: {result.id}[/dim]")
 
         if wait:
@@ -574,14 +603,16 @@ def shorts_render(
                 # Show the final URL prominently
                 final_url = task_result.get("final_mp4_url")
                 if final_url:
-                    console.print(f"\n[bold cyan]Final Video URL:[/bold cyan]")
+                    console.print("\n[bold cyan]Final Video URL:[/bold cyan]")
                     console.print(f"  {final_url}")
             else:
-                console.print(f"\n[bold red]Render failed![/bold red]")
+                console.print("\n[bold red]Render failed![/bold red]")
                 console.print(f"[red]{task_result.get('error', 'Unknown error')}[/red]")
                 raise typer.Exit(code=1)
         else:
-            console.print(f"\n[dim]Use 'shorts-engine shorts status {result.id}' to check progress[/dim]")
+            console.print(
+                f"\n[dim]Use 'shorts-engine shorts status {result.id}' to check progress[/dim]"
+            )
 
     except Exception as e:
         console.print(f"[bold red]Error: {e}[/bold red]")
@@ -596,7 +627,9 @@ def shorts_render(
 @projects_app.command("create")
 def projects_create(
     name: str = typer.Option(..., "--name", "-n", help="Project name"),
-    description: Optional[str] = typer.Option(None, "--description", "-d", help="Project description"),
+    description: str | None = typer.Option(
+        None, "--description", "-d", help="Project description"
+    ),
     preset: str = typer.Option(
         "DARK_DYSTOPIAN_ANIME",
         "--preset",
@@ -606,6 +639,7 @@ def projects_create(
 ) -> None:
     """Create a new project (content brand/channel)."""
     from uuid import uuid4
+
     from shorts_engine.db.models import ProjectModel
     from shorts_engine.db.session import get_session_context
     from shorts_engine.presets.styles import get_preset, get_preset_names
@@ -629,29 +663,36 @@ def projects_create(
         session.add(project)
         session.commit()
 
-        console.print(f"[bold green]Project created successfully![/bold green]")
+        console.print("[bold green]Project created successfully![/bold green]")
         console.print(f"[cyan]ID:[/cyan] {project.id}")
         console.print(f"[cyan]Name:[/cyan] {project.name}")
         console.print(f"[cyan]Default Preset:[/cyan] {project.default_style_preset}")
 
-        console.print(f"\n[dim]Create a short with:[/dim]")
-        console.print(f"[dim]  shorts-engine shorts create --project {project.id} --idea \"Your idea here\"[/dim]")
+        console.print("\n[dim]Create a short with:[/dim]")
+        console.print(
+            f'[dim]  shorts-engine shorts create --project {project.id} --idea "Your idea here"[/dim]'
+        )
 
 
 @projects_app.command("list")
 def projects_list() -> None:
     """List all projects."""
-    from shorts_engine.db.models import ProjectModel
-    from shorts_engine.db.session import get_session_context
     from sqlalchemy import select
 
+    from shorts_engine.db.models import ProjectModel
+    from shorts_engine.db.session import get_session_context
+
     with get_session_context() as session:
-        projects = session.execute(
-            select(ProjectModel).order_by(ProjectModel.created_at.desc())
-        ).scalars().all()
+        projects = (
+            session.execute(select(ProjectModel).order_by(ProjectModel.created_at.desc()))
+            .scalars()
+            .all()
+        )
 
         if not projects:
-            console.print("[dim]No projects found. Create one with 'shorts-engine projects create'[/dim]")
+            console.print(
+                "[dim]No projects found. Create one with 'shorts-engine projects create'[/dim]"
+            )
             return
 
         table = Table(title="Projects")
@@ -678,9 +719,10 @@ def projects_show(
     project_id: str = typer.Argument(..., help="Project ID (UUID)"),
 ) -> None:
     """Show details of a project."""
+    from sqlalchemy import func, select
+
     from shorts_engine.db.models import ProjectModel, VideoJobModel
     from shorts_engine.db.session import get_session_context
-    from sqlalchemy import func, select
 
     try:
         project_uuid = UUID(project_id)
@@ -699,17 +741,19 @@ def projects_show(
             select(func.count(VideoJobModel.id)).where(VideoJobModel.project_id == project_uuid)
         ).scalar()
 
-        console.print(Panel.fit(
-            f"[bold]{project.name}[/bold]\n\n"
-            f"[cyan]ID:[/cyan] {project.id}\n"
-            f"[cyan]Description:[/cyan] {project.description or 'N/A'}\n"
-            f"[cyan]Default Preset:[/cyan] {project.default_style_preset or 'N/A'}\n"
-            f"[cyan]Active:[/cyan] {'Yes' if project.is_active else 'No'}\n"
-            f"[cyan]Video Jobs:[/cyan] {job_count}\n"
-            f"[cyan]Created:[/cyan] {project.created_at.strftime('%Y-%m-%d %H:%M') if project.created_at else 'N/A'}",
-            title="Project Details",
-            border_style="blue",
-        ))
+        console.print(
+            Panel.fit(
+                f"[bold]{project.name}[/bold]\n\n"
+                f"[cyan]ID:[/cyan] {project.id}\n"
+                f"[cyan]Description:[/cyan] {project.description or 'N/A'}\n"
+                f"[cyan]Default Preset:[/cyan] {project.default_style_preset or 'N/A'}\n"
+                f"[cyan]Active:[/cyan] {'Yes' if project.is_active else 'No'}\n"
+                f"[cyan]Video Jobs:[/cyan] {job_count}\n"
+                f"[cyan]Created:[/cyan] {project.created_at.strftime('%Y-%m-%d %H:%M') if project.created_at else 'N/A'}",
+                title="Project Details",
+                border_style="blue",
+            )
+        )
 
 
 # =============================================================================
@@ -723,16 +767,18 @@ def presets() -> None:
     from shorts_engine.presets.styles import PRESETS
 
     for name, preset in PRESETS.items():
-        console.print(Panel.fit(
-            f"[bold]{preset.display_name}[/bold]\n\n"
-            f"{preset.description}\n\n"
-            f"[cyan]Aspect Ratio:[/cyan] {preset.aspect_ratio.value}\n"
-            f"[cyan]Scene Duration:[/cyan] {preset.default_duration_per_scene}s\n"
-            f"[cyan]Camera Style:[/cyan] {preset.camera_style}\n\n"
-            f"[dim]Style Tokens:[/dim] {', '.join(preset.style_tokens[:5])}...",
-            title=name,
-            border_style="cyan",
-        ))
+        console.print(
+            Panel.fit(
+                f"[bold]{preset.display_name}[/bold]\n\n"
+                f"{preset.description}\n\n"
+                f"[cyan]Aspect Ratio:[/cyan] {preset.aspect_ratio.value}\n"
+                f"[cyan]Scene Duration:[/cyan] {preset.default_duration_per_scene}s\n"
+                f"[cyan]Camera Style:[/cyan] {preset.camera_style}\n\n"
+                f"[dim]Style Tokens:[/dim] {', '.join(preset.style_tokens[:5])}...",
+                title=name,
+                border_style="cyan",
+            )
+        )
         console.print()
 
 
@@ -745,7 +791,11 @@ def presets() -> None:
 def accounts_connect(
     platform: str = typer.Argument(..., help="Platform to connect (youtube, instagram, tiktok)"),
     label: str = typer.Option(..., "--label", "-l", help="User-friendly label for this account"),
-    device_flow: bool = typer.Option(True, "--device-flow/--browser", help="Use device flow (recommended) or browser redirect (YouTube only)"),
+    device_flow: bool = typer.Option(
+        True,
+        "--device-flow/--browser",
+        help="Use device flow (recommended) or browser redirect (YouTube only)",
+    ),
 ) -> None:
     """Connect a platform account using OAuth.
 
@@ -768,22 +818,24 @@ def accounts_connect(
     if platform == "youtube":
         auth_method = "Device Flow" if device_flow else "Browser Redirect"
 
-    console.print(Panel.fit(
-        f"[bold]Connecting {platform.title()} Account[/bold]\n\n"
-        f"[cyan]Label:[/cyan] {label}\n"
-        f"[cyan]Auth Method:[/cyan] {auth_method}\n\n"
-        "[dim]You will be prompted to authorize access to your account.[/dim]",
-        title="OAuth Setup",
-        border_style="blue",
-    ))
+    console.print(
+        Panel.fit(
+            f"[bold]Connecting {platform.title()} Account[/bold]\n\n"
+            f"[cyan]Label:[/cyan] {label}\n"
+            f"[cyan]Auth Method:[/cyan] {auth_method}\n\n"
+            "[dim]You will be prompted to authorize access to your account.[/dim]",
+            title="OAuth Setup",
+            border_style="blue",
+        )
+    )
 
     try:
         from shorts_engine.db.session import get_session_context
         from shorts_engine.services.accounts import (
-            connect_youtube_account,
+            AccountError,
             connect_instagram_account,
             connect_tiktok_account,
-            AccountError,
+            connect_youtube_account,
         )
 
         with get_session_context() as session:
@@ -809,7 +861,7 @@ def accounts_connect(
             else:
                 raise ValueError(f"Unknown platform: {platform}")
 
-            console.print(f"\n[bold green]Account connected successfully![/bold green]")
+            console.print("\n[bold green]Account connected successfully![/bold green]")
             console.print(f"[cyan]Account ID:[/cyan] {account.id}")
             console.print(f"[cyan]Label:[/cyan] {account.label}")
             console.print(f"[cyan]{account_type}:[/cyan] {account.external_name or 'Unknown'}")
@@ -820,10 +872,14 @@ def accounts_connect(
                 if account.capabilities.get("direct_post"):
                     console.print("[cyan]Direct Post:[/cyan] [green]Enabled[/green]")
                 else:
-                    console.print("[cyan]Direct Post:[/cyan] [yellow]Not available (manual publish required)[/yellow]")
+                    console.print(
+                        "[cyan]Direct Post:[/cyan] [yellow]Not available (manual publish required)[/yellow]"
+                    )
 
-            console.print(f"\n[dim]You can now publish videos with:[/dim]")
-            console.print(f"[dim]  shorts-engine shorts publish --job <uuid> --dest {platform}:{label}[/dim]")
+            console.print("\n[dim]You can now publish videos with:[/dim]")
+            console.print(
+                f"[dim]  shorts-engine shorts publish --job <uuid> --dest {platform}:{label}[/dim]"
+            )
 
     except AccountError as e:
         console.print(f"[bold red]Account error: {e}[/bold red]")
@@ -835,7 +891,7 @@ def accounts_connect(
 
 @accounts_app.command("list")
 def accounts_list(
-    platform: Optional[str] = typer.Option(None, "--platform", "-p", help="Filter by platform"),
+    platform: str | None = typer.Option(None, "--platform", "-p", help="Filter by platform"),
 ) -> None:
     """List connected platform accounts."""
     from shorts_engine.db.session import get_session_context
@@ -845,7 +901,9 @@ def accounts_list(
         accounts = list_accounts(session, platform=platform)
 
         if not accounts:
-            console.print("[dim]No accounts connected. Use 'shorts-engine accounts connect' to add one.[/dim]")
+            console.print(
+                "[dim]No accounts connected. Use 'shorts-engine accounts connect' to add one.[/dim]"
+            )
             return
 
         table = Table(title="Connected Accounts")
@@ -878,10 +936,13 @@ def accounts_disconnect(
     force: bool = typer.Option(False, "--force", "-f", help="Skip confirmation"),
 ) -> None:
     """Disconnect a platform account."""
+    from sqlalchemy import select
+
     from shorts_engine.db.models import PlatformAccountModel
     from shorts_engine.db.session import get_session_context
-    from shorts_engine.services.accounts import disconnect_account, get_account_by_id, AccountNotFoundError
-    from sqlalchemy import select
+    from shorts_engine.services.accounts import (
+        disconnect_account,
+    )
 
     with get_session_context() as session:
         # Try to find by ID first, then by label
@@ -900,7 +961,7 @@ def accounts_disconnect(
             raise typer.Exit(code=1)
 
         if not force:
-            console.print(f"[yellow]About to disconnect:[/yellow]")
+            console.print("[yellow]About to disconnect:[/yellow]")
             console.print(f"  Platform: {account.platform}")
             console.print(f"  Label: {account.label}")
             console.print(f"  Channel: {account.external_name or 'Unknown'}")
@@ -917,15 +978,17 @@ def accounts_disconnect(
 def accounts_link(
     account_label: str = typer.Option(..., "--account", "-a", help="Account label"),
     project_id: str = typer.Option(..., "--project", "-p", help="Project ID"),
-    default: bool = typer.Option(False, "--default", "-d", help="Set as default account for this project"),
+    default: bool = typer.Option(
+        False, "--default", "-d", help="Set as default account for this project"
+    ),
 ) -> None:
     """Link an account to a project for publishing."""
     from shorts_engine.db.session import get_session_context
     from shorts_engine.services.accounts import (
-        get_account_by_label,
-        link_account_to_project,
         AccountError,
         AccountNotFoundError,
+        get_account_by_label,
+        link_account_to_project,
     )
 
     try:
@@ -937,7 +1000,7 @@ def accounts_link(
     with get_session_context() as session:
         try:
             account = get_account_by_label(session, "youtube", account_label)
-            link = link_account_to_project(
+            link_account_to_project(
                 session,
                 account.id,
                 project_uuid,
@@ -995,11 +1058,21 @@ def parse_destinations(dest_args: list[str]) -> list[dict]:
 @shorts_app.command("publish")
 def shorts_publish(
     job_id: str = typer.Option(..., "--job", "-j", help="Video job ID (UUID) to publish"),
-    dest: Optional[list[str]] = typer.Option(None, "--dest", "-d", help="Destination as platform:label (can be used multiple times)"),
-    youtube_account: Optional[str] = typer.Option(None, "--youtube-account", "-y", help="YouTube account label (legacy, use --dest instead)"),
-    publish_at: Optional[str] = typer.Option(None, "--publish-at", help="Schedule publish time (ISO 8601)"),
-    visibility: str = typer.Option("public", "--visibility", "-v", help="Video visibility (public, private, unlisted)"),
-    dry_run: bool = typer.Option(False, "--dry-run", help="Show what would be uploaded without actually uploading"),
+    dest: list[str] | None = typer.Option(
+        None, "--dest", "-d", help="Destination as platform:label (can be used multiple times)"
+    ),
+    youtube_account: str | None = typer.Option(
+        None, "--youtube-account", "-y", help="YouTube account label (legacy, use --dest instead)"
+    ),
+    publish_at: str | None = typer.Option(
+        None, "--publish-at", help="Schedule publish time (ISO 8601)"
+    ),
+    visibility: str = typer.Option(
+        "public", "--visibility", "-v", help="Video visibility (public, private, unlisted)"
+    ),
+    dry_run: bool = typer.Option(
+        False, "--dry-run", help="Show what would be uploaded without actually uploading"
+    ),
     wait: bool = typer.Option(False, "--wait", "-w", help="Wait for publish to complete"),
 ) -> None:
     """Publish a rendered video to platforms.
@@ -1026,7 +1099,7 @@ def shorts_publish(
         # Dry run
         shorts-engine shorts publish --job <uuid> --dest youtube:Main --dry-run
     """
-    from shorts_engine.db.models import AssetModel, VideoJobModel
+    from shorts_engine.db.models import VideoJobModel
     from shorts_engine.db.session import get_session_context
 
     # Validate job ID
@@ -1055,7 +1128,9 @@ def shorts_publish(
     if not destinations:
         console.print("[bold red]No destination specified.[/bold red]")
         console.print("[dim]Use --dest platform:label or --youtube-account 'Label'[/dim]")
-        console.print("[dim]Example: shorts-engine shorts publish --job <uuid> --dest youtube:MainChannel[/dim]")
+        console.print(
+            "[dim]Example: shorts-engine shorts publish --job <uuid> --dest youtube:MainChannel[/dim]"
+        )
         raise typer.Exit(code=1)
 
     # Verify job exists and has a final video
@@ -1073,7 +1148,7 @@ def shorts_publish(
                 break
 
         if not final_asset:
-            console.print(f"[bold red]No final video found for job.[/bold red]")
+            console.print("[bold red]No final video found for job.[/bold red]")
             console.print("[dim]Run 'shorts-engine shorts render --job <uuid>' first.[/dim]")
             raise typer.Exit(code=1)
 
@@ -1082,17 +1157,19 @@ def shorts_publish(
     # Build destinations display
     dest_display = "\n".join(f"  - {d['platform'].title()}: {d['label']}" for d in destinations)
 
-    console.print(Panel.fit(
-        f"[bold]Publishing Video[/bold]\n\n"
-        f"[cyan]Job:[/cyan] {job_title}\n"
-        f"[cyan]Job ID:[/cyan] {job_id}\n"
-        f"[cyan]Destinations:[/cyan]\n{dest_display}\n"
-        f"[cyan]Visibility:[/cyan] {visibility}\n"
-        f"[cyan]Scheduled:[/cyan] {publish_at or 'Immediate'}\n"
-        f"[cyan]Dry Run:[/cyan] {'Yes' if dry_run else 'No'}",
-        title="Publish Pipeline",
-        border_style="magenta",
-    ))
+    console.print(
+        Panel.fit(
+            f"[bold]Publishing Video[/bold]\n\n"
+            f"[cyan]Job:[/cyan] {job_title}\n"
+            f"[cyan]Job ID:[/cyan] {job_id}\n"
+            f"[cyan]Destinations:[/cyan]\n{dest_display}\n"
+            f"[cyan]Visibility:[/cyan] {visibility}\n"
+            f"[cyan]Scheduled:[/cyan] {publish_at or 'Immediate'}\n"
+            f"[cyan]Dry Run:[/cyan] {'Yes' if dry_run else 'No'}",
+            title="Publish Pipeline",
+            border_style="magenta",
+        )
+    )
 
     try:
         from shorts_engine.jobs.publish_pipeline import run_publish_pipeline_task
@@ -1105,7 +1182,7 @@ def shorts_publish(
             dry_run=dry_run,
         )
 
-        console.print(f"\n[green]Publish pipeline enqueued![/green]")
+        console.print("\n[green]Publish pipeline enqueued![/green]")
         console.print(f"[dim]Task ID: {result.id}[/dim]")
 
         if wait:
@@ -1122,11 +1199,17 @@ def shorts_publish(
                 for platform_name, platform_result in platforms.items():
                     if platform_result.get("success"):
                         if platform_result.get("dry_run"):
-                            console.print(f"\n[bold cyan]{platform_name.title()} (Dry Run):[/bold cyan]")
-                            console.print("[dim]Would have uploaded with the following settings:[/dim]")
+                            console.print(
+                                f"\n[bold cyan]{platform_name.title()} (Dry Run):[/bold cyan]"
+                            )
+                            console.print(
+                                "[dim]Would have uploaded with the following settings:[/dim]"
+                            )
                             payload = platform_result.get("payload", {})
                             if platform_name == "youtube":
-                                console.print(f"  Title: {payload.get('metadata', {}).get('snippet', {}).get('title', 'N/A')}")
+                                console.print(
+                                    f"  Title: {payload.get('metadata', {}).get('snippet', {}).get('title', 'N/A')}"
+                                )
                             else:
                                 console.print(f"  Payload: {str(payload)[:100]}...")
                         else:
@@ -1134,25 +1217,39 @@ def shorts_publish(
                             if platform_result.get("url"):
                                 console.print(f"  URL: {platform_result.get('url')}")
                             if platform_result.get("platform_video_id"):
-                                console.print(f"  Video ID: {platform_result.get('platform_video_id')}")
+                                console.print(
+                                    f"  Video ID: {platform_result.get('platform_video_id')}"
+                                )
                             if platform_result.get("forced_private"):
-                                console.print("  [yellow]Note: Video was forced to private by platform[/yellow]")
+                                console.print(
+                                    "  [yellow]Note: Video was forced to private by platform[/yellow]"
+                                )
                             if platform_result.get("status") == "needs_manual_publish":
-                                console.print("  [yellow]Status: Needs manual publish (Direct Post not available)[/yellow]")
+                                console.print(
+                                    "  [yellow]Status: Needs manual publish (Direct Post not available)[/yellow]"
+                                )
                                 if platform_result.get("manual_publish_path"):
-                                    console.print(f"  Video file: {platform_result.get('manual_publish_path')}")
+                                    console.print(
+                                        f"  Video file: {platform_result.get('manual_publish_path')}"
+                                    )
                                 if platform_result.get("share_url"):
-                                    console.print(f"  Share URL: {platform_result.get('share_url')}")
+                                    console.print(
+                                        f"  Share URL: {platform_result.get('share_url')}"
+                                    )
                     else:
-                        console.print(f"\n[bold red]{platform_name.title()} failed:[/bold red] {platform_result.get('error')}")
+                        console.print(
+                            f"\n[bold red]{platform_name.title()} failed:[/bold red] {platform_result.get('error')}"
+                        )
             else:
-                console.print(f"\n[bold red]Publish failed![/bold red]")
+                console.print("\n[bold red]Publish failed![/bold red]")
                 for platform, result_data in task_result.get("platforms", {}).items():
                     if not result_data.get("success"):
                         console.print(f"  {platform}: {result_data.get('error')}")
                 raise typer.Exit(code=1)
         else:
-            console.print(f"\n[dim]Use 'shorts-engine shorts status {result.id}' to check progress[/dim]")
+            console.print(
+                f"\n[dim]Use 'shorts-engine shorts status {result.id}' to check progress[/dim]"
+            )
 
     except Exception as e:
         console.print(f"[bold red]Error: {e}[/bold red]")
@@ -1210,7 +1307,9 @@ def ingest_metrics(
         console.print("[dim]Use formats like: 24h, 7d, 1w[/dim]")
         raise typer.Exit(code=1)
 
-    console.print(f"[bold blue]Ingesting metrics for videos published in the last {since}...[/bold blue]")
+    console.print(
+        f"[bold blue]Ingesting metrics for videos published in the last {since}...[/bold blue]"
+    )
 
     try:
         from shorts_engine.jobs.ingestion_tasks import ingest_metrics_batch_task
@@ -1224,7 +1323,7 @@ def ingest_metrics(
                 task_result = result.get(timeout=3600)
 
             if task_result.get("success"):
-                console.print(f"[bold green]Ingestion complete![/bold green]")
+                console.print("[bold green]Ingestion complete![/bold green]")
 
                 table = Table(title="Metrics Ingestion Result")
                 table.add_column("Metric", style="cyan")
@@ -1236,11 +1335,11 @@ def ingest_metrics(
 
                 console.print(table)
             else:
-                console.print(f"[bold red]Ingestion failed[/bold red]")
+                console.print("[bold red]Ingestion failed[/bold red]")
                 console.print(f"[red]{task_result.get('error', 'Unknown error')}[/red]")
                 raise typer.Exit(code=1)
         else:
-            console.print(f"[green]Task enqueued successfully![/green]")
+            console.print("[green]Task enqueued successfully![/green]")
             console.print(f"[dim]Use 'shorts-engine status {result.id}' to check progress[/dim]")
 
     except Exception as e:
@@ -1271,7 +1370,9 @@ def ingest_comments(
         console.print("[dim]Use formats like: 24h, 7d, 1w[/dim]")
         raise typer.Exit(code=1)
 
-    console.print(f"[bold blue]Ingesting comments for videos published in the last {since}...[/bold blue]")
+    console.print(
+        f"[bold blue]Ingesting comments for videos published in the last {since}...[/bold blue]"
+    )
     console.print(f"[dim]Max {max_per_video} comments per video[/dim]")
 
     try:
@@ -1289,7 +1390,7 @@ def ingest_comments(
                 task_result = result.get(timeout=3600)
 
             if task_result.get("success"):
-                console.print(f"[bold green]Ingestion complete![/bold green]")
+                console.print("[bold green]Ingestion complete![/bold green]")
 
                 table = Table(title="Comments Ingestion Result")
                 table.add_column("Metric", style="cyan")
@@ -1301,11 +1402,11 @@ def ingest_comments(
 
                 console.print(table)
             else:
-                console.print(f"[bold red]Ingestion failed[/bold red]")
+                console.print("[bold red]Ingestion failed[/bold red]")
                 console.print(f"[red]{task_result.get('error', 'Unknown error')}[/red]")
                 raise typer.Exit(code=1)
         else:
-            console.print(f"[green]Task enqueued successfully![/green]")
+            console.print("[green]Task enqueued successfully![/green]")
             console.print(f"[dim]Use 'shorts-engine status {result.id}' to check progress[/dim]")
 
     except Exception as e:
@@ -1322,8 +1423,12 @@ def ingest_comments(
 def plan_next(
     project: str = typer.Option(..., "--project", "-p", help="Project ID (UUID)"),
     n: int = typer.Option(5, "--count", "-n", help="Number of videos to plan"),
-    topics_file: Optional[str] = typer.Option(None, "--topics-file", "-f", help="File with topics (one per line)"),
-    topics: Optional[str] = typer.Option(None, "--topics", "-t", help="Comma-separated list of topics"),
+    topics_file: str | None = typer.Option(
+        None, "--topics-file", "-f", help="File with topics (one per line)"
+    ),
+    topics: str | None = typer.Option(
+        None, "--topics", "-t", help="Comma-separated list of topics"
+    ),
     wait: bool = typer.Option(False, "--wait", "-w", help="Wait for completion"),
 ) -> None:
     """Plan the next batch of videos using the learning loop.
@@ -1350,7 +1455,7 @@ def plan_next(
 
     if topics_file:
         try:
-            with open(topics_file, "r") as f:
+            with open(topics_file) as f:
                 topic_list = [line.strip() for line in f if line.strip()]
         except FileNotFoundError:
             console.print(f"[bold red]Topics file not found: {topics_file}[/bold red]")
@@ -1361,18 +1466,22 @@ def plan_next(
 
     if not topic_list:
         console.print("[bold red]No topics provided. Use --topics-file or --topics.[/bold red]")
-        console.print("[dim]Example: --topics 'A day in the life of a samurai,Epic battle scene,Mysterious temple'[/dim]")
+        console.print(
+            "[dim]Example: --topics 'A day in the life of a samurai,Epic battle scene,Mysterious temple'[/dim]"
+        )
         raise typer.Exit(code=1)
 
-    console.print(Panel.fit(
-        f"[bold]Planning Next Batch[/bold]\n\n"
-        f"[cyan]Project:[/cyan] {project}\n"
-        f"[cyan]Videos to plan:[/cyan] {min(n, len(topic_list))}\n"
-        f"[cyan]Topics provided:[/cyan] {len(topic_list)}\n"
-        f"[cyan]Strategy:[/cyan] 70% exploit / 30% explore",
-        title="Learning Loop Batch",
-        border_style="magenta",
-    ))
+    console.print(
+        Panel.fit(
+            f"[bold]Planning Next Batch[/bold]\n\n"
+            f"[cyan]Project:[/cyan] {project}\n"
+            f"[cyan]Videos to plan:[/cyan] {min(n, len(topic_list))}\n"
+            f"[cyan]Topics provided:[/cyan] {len(topic_list)}\n"
+            f"[cyan]Strategy:[/cyan] 70% exploit / 30% explore",
+            title="Learning Loop Batch",
+            border_style="magenta",
+        )
+    )
 
     try:
         from shorts_engine.jobs.learning_jobs import plan_next_batch_task
@@ -1390,7 +1499,7 @@ def plan_next(
                 task_result = result.get(timeout=300)
 
             if task_result.get("success"):
-                console.print(f"[bold green]Batch planned successfully![/bold green]")
+                console.print("[bold green]Batch planned successfully![/bold green]")
 
                 table = Table(title="Batch Results")
                 table.add_column("Field", style="cyan")
@@ -1406,20 +1515,20 @@ def plan_next(
                 # Show job IDs
                 job_ids = task_result.get("job_ids", [])
                 if job_ids:
-                    console.print(f"\n[bold]Created Video Jobs:[/bold]")
+                    console.print("\n[bold]Created Video Jobs:[/bold]")
                     for job_id in job_ids[:5]:  # Show first 5
                         console.print(f"  {job_id}")
                     if len(job_ids) > 5:
                         console.print(f"  [dim]... and {len(job_ids) - 5} more[/dim]")
 
-                console.print(f"\n[dim]Run video pipelines with:[/dim]")
-                console.print(f"[dim]  shorts-engine shorts job <video_job_id>[/dim]")
+                console.print("\n[dim]Run video pipelines with:[/dim]")
+                console.print("[dim]  shorts-engine shorts job <video_job_id>[/dim]")
             else:
-                console.print(f"[bold red]Batch planning failed![/bold red]")
+                console.print("[bold red]Batch planning failed![/bold red]")
                 console.print(f"[red]{task_result.get('error', 'Unknown error')}[/red]")
                 raise typer.Exit(code=1)
         else:
-            console.print(f"[green]Batch planning task enqueued![/green]")
+            console.print("[green]Batch planning task enqueued![/green]")
             console.print(f"[dim]Use 'shorts-engine status {result.id}' to check progress[/dim]")
 
     except Exception as e:
@@ -1441,9 +1550,10 @@ def list_recipes(
     Example:
         shorts-engine learn recipes --project <uuid>
     """
+    from sqlalchemy import desc, select
+
     from shorts_engine.db.models import RecipeModel
     from shorts_engine.db.session import get_session_context
-    from sqlalchemy import desc, select
 
     try:
         project_uuid = UUID(project)
@@ -1452,15 +1562,21 @@ def list_recipes(
         raise typer.Exit(code=1)
 
     with get_session_context() as session:
-        recipes = session.execute(
-            select(RecipeModel)
-            .where(RecipeModel.project_id == project_uuid)
-            .order_by(desc(RecipeModel.avg_reward_score).nullslast())
-            .limit(limit)
-        ).scalars().all()
+        recipes = (
+            session.execute(
+                select(RecipeModel)
+                .where(RecipeModel.project_id == project_uuid)
+                .order_by(desc(RecipeModel.avg_reward_score).nullslast())
+                .limit(limit)
+            )
+            .scalars()
+            .all()
+        )
 
         if not recipes:
-            console.print("[dim]No recipes found. Videos need recipe assignments via backfill or batch planning.[/dim]")
+            console.print(
+                "[dim]No recipes found. Videos need recipe assignments via backfill or batch planning.[/dim]"
+            )
             return
 
         table = Table(title="Top Recipes")
@@ -1491,7 +1607,9 @@ def list_recipes(
 @learning_app.command("experiments")
 def list_experiments(
     project: str = typer.Option(..., "--project", "-p", help="Project ID (UUID)"),
-    status_filter: Optional[str] = typer.Option(None, "--status", "-s", help="Filter by status (running, completed, inconclusive)"),
+    status_filter: str | None = typer.Option(
+        None, "--status", "-s", help="Filter by status (running, completed, inconclusive)"
+    ),
     limit: int = typer.Option(10, "--limit", "-n", help="Number of experiments to show"),
 ) -> None:
     """List A/B test experiments for a project.
@@ -1505,9 +1623,10 @@ def list_experiments(
         shorts-engine learn experiments --project <uuid>
         shorts-engine learn experiments --project <uuid> --status completed
     """
+    from sqlalchemy import desc, select
+
     from shorts_engine.db.models import ExperimentModel
     from shorts_engine.db.session import get_session_context
-    from sqlalchemy import desc, select
 
     try:
         project_uuid = UUID(project)
@@ -1526,7 +1645,9 @@ def list_experiments(
         experiments = session.execute(query).scalars().all()
 
         if not experiments:
-            console.print("[dim]No experiments found. Explore mode during batch planning creates experiments.[/dim]")
+            console.print(
+                "[dim]No experiments found. Explore mode during batch planning creates experiments.[/dim]"
+            )
             return
 
         table = Table(title="A/B Experiments")
@@ -1589,11 +1710,19 @@ def learning_stats(
     Example:
         shorts-engine learn stats --project <uuid>
     """
-    from datetime import timedelta, timezone
-    from datetime import datetime
-    from shorts_engine.db.models import ExperimentModel, PlannedBatchModel, RecipeModel, VideoJobModel, VideoMetricsModel, PublishJobModel
-    from shorts_engine.db.session import get_session_context
+    from datetime import datetime, timedelta
+
     from sqlalchemy import desc, func, select
+
+    from shorts_engine.db.models import (
+        ExperimentModel,
+        PlannedBatchModel,
+        PublishJobModel,
+        RecipeModel,
+        VideoJobModel,
+        VideoMetricsModel,
+    )
+    from shorts_engine.db.session import get_session_context
 
     try:
         project_uuid = UUID(project)
@@ -1603,35 +1732,60 @@ def learning_stats(
 
     with get_session_context() as session:
         # Count recipes
-        total_recipes = session.execute(
-            select(func.count()).select_from(RecipeModel).where(RecipeModel.project_id == project_uuid)
-        ).scalar() or 0
+        total_recipes = (
+            session.execute(
+                select(func.count())
+                .select_from(RecipeModel)
+                .where(RecipeModel.project_id == project_uuid)
+            ).scalar()
+            or 0
+        )
 
         # Count experiments
-        total_experiments = session.execute(
-            select(func.count()).select_from(ExperimentModel).where(ExperimentModel.project_id == project_uuid)
-        ).scalar() or 0
+        total_experiments = (
+            session.execute(
+                select(func.count())
+                .select_from(ExperimentModel)
+                .where(ExperimentModel.project_id == project_uuid)
+            ).scalar()
+            or 0
+        )
 
-        running_experiments = session.execute(
-            select(func.count()).select_from(ExperimentModel).where(
-                ExperimentModel.project_id == project_uuid,
-                ExperimentModel.status == "running",
-            )
-        ).scalar() or 0
+        running_experiments = (
+            session.execute(
+                select(func.count())
+                .select_from(ExperimentModel)
+                .where(
+                    ExperimentModel.project_id == project_uuid,
+                    ExperimentModel.status == "running",
+                )
+            ).scalar()
+            or 0
+        )
 
         # Count batches
-        total_batches = session.execute(
-            select(func.count()).select_from(PlannedBatchModel).where(PlannedBatchModel.project_id == project_uuid)
-        ).scalar() or 0
+        total_batches = (
+            session.execute(
+                select(func.count())
+                .select_from(PlannedBatchModel)
+                .where(PlannedBatchModel.project_id == project_uuid)
+            ).scalar()
+            or 0
+        )
 
         # Videos last 7 days
-        cutoff = datetime.now(timezone.utc) - timedelta(days=7)
-        videos_7d = session.execute(
-            select(func.count()).select_from(VideoJobModel).where(
-                VideoJobModel.project_id == project_uuid,
-                VideoJobModel.created_at >= cutoff,
-            )
-        ).scalar() or 0
+        cutoff = datetime.now(UTC) - timedelta(days=7)
+        videos_7d = (
+            session.execute(
+                select(func.count())
+                .select_from(VideoJobModel)
+                .where(
+                    VideoJobModel.project_id == project_uuid,
+                    VideoJobModel.created_at >= cutoff,
+                )
+            ).scalar()
+            or 0
+        )
 
         # Average reward
         avg_reward = session.execute(
@@ -1656,26 +1810,29 @@ def learning_stats(
             .limit(1)
         ).scalar_one_or_none()
 
-        console.print(Panel.fit(
-            f"[bold]Learning Loop Stats[/bold]\n\n"
-            f"[cyan]Total Recipes:[/cyan] {total_recipes}\n"
-            f"[cyan]Total Experiments:[/cyan] {total_experiments}\n"
-            f"[cyan]Running Experiments:[/cyan] {running_experiments}\n"
-            f"[cyan]Total Batches:[/cyan] {total_batches}\n"
-            f"[cyan]Videos (Last 7d):[/cyan] {videos_7d}\n"
-            f"[cyan]Avg Reward Score:[/cyan] {avg_reward:.4f if avg_reward else 'N/A'}\n\n"
-            f"[bold]Top Recipe:[/bold]\n"
-            + (
-                f"  Preset: {top_recipe.preset}\n"
-                f"  Hook: {top_recipe.hook_type}\n"
-                f"  Scenes: {top_recipe.scene_count}\n"
-                f"  Avg Reward: {top_recipe.avg_reward_score:.4f}\n"
-                f"  Uses: {top_recipe.times_used}"
-                if top_recipe else "  No recipes with performance data yet"
-            ),
-            title=f"Project {str(project_uuid)[:8]}...",
-            border_style="magenta",
-        ))
+        console.print(
+            Panel.fit(
+                f"[bold]Learning Loop Stats[/bold]\n\n"
+                f"[cyan]Total Recipes:[/cyan] {total_recipes}\n"
+                f"[cyan]Total Experiments:[/cyan] {total_experiments}\n"
+                f"[cyan]Running Experiments:[/cyan] {running_experiments}\n"
+                f"[cyan]Total Batches:[/cyan] {total_batches}\n"
+                f"[cyan]Videos (Last 7d):[/cyan] {videos_7d}\n"
+                f"[cyan]Avg Reward Score:[/cyan] {avg_reward:.4f if avg_reward else 'N/A'}\n\n"
+                f"[bold]Top Recipe:[/bold]\n"
+                + (
+                    f"  Preset: {top_recipe.preset}\n"
+                    f"  Hook: {top_recipe.hook_type}\n"
+                    f"  Scenes: {top_recipe.scene_count}\n"
+                    f"  Avg Reward: {top_recipe.avg_reward_score:.4f}\n"
+                    f"  Uses: {top_recipe.times_used}"
+                    if top_recipe
+                    else "  No recipes with performance data yet"
+                ),
+                title=f"Project {str(project_uuid)[:8]}...",
+                border_style="magenta",
+            )
+        )
 
 
 @learning_app.command("backfill")
@@ -1705,7 +1862,7 @@ def backfill_recipes(
         recipe_service = RecipeService(session)
         count = recipe_service.backfill_recipes_from_features(project_uuid)
 
-        console.print(f"[green]Backfill complete![/green]")
+        console.print("[green]Backfill complete![/green]")
         console.print(f"[cyan]Videos updated:[/cyan] {count}")
 
 
@@ -1744,7 +1901,7 @@ def update_recipe_stats(
         recipe_service = RecipeService(session)
         recipes_updated = recipe_service.update_all_recipe_stats(project_uuid)
 
-        console.print(f"[green]Stats update complete![/green]")
+        console.print("[green]Stats update complete![/green]")
         console.print(f"[cyan]Recipes updated:[/cyan] {recipes_updated}")
 
 

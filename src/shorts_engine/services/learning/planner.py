@@ -6,18 +6,22 @@ specific recipe constraints (scene count, hook type, ending type, etc.)
 
 import json
 from dataclasses import dataclass
-from typing import Any
 
+from shorts_engine.adapters.llm.anthropic import AnthropicProvider
 from shorts_engine.adapters.llm.base import LLMMessage, LLMProvider
 from shorts_engine.adapters.llm.openai import OpenAIProvider
-from shorts_engine.adapters.llm.anthropic import AnthropicProvider
 from shorts_engine.adapters.llm.stub import StubLLMProvider
 from shorts_engine.config import settings
-from shorts_engine.domain.enums import HookType, EndingType, NarrationWPMBucket, CaptionDensityBucket
+from shorts_engine.domain.enums import (
+    CaptionDensityBucket,
+    EndingType,
+    HookType,
+    NarrationWPMBucket,
+)
 from shorts_engine.logging import get_logger
 from shorts_engine.presets.styles import StylePreset, get_preset
 from shorts_engine.services.learning.recipe import Recipe
-from shorts_engine.services.planner import VideoPlan, ScenePlan
+from shorts_engine.services.planner import ScenePlan, VideoPlan
 
 logger = get_logger(__name__)
 
@@ -46,41 +50,45 @@ class RecipeConstraints:
     def get_hook_guidance(self) -> str:
         """Get guidance for the hook type."""
         guidance = {
-            HookType.QUESTION: "Start with a compelling question that creates curiosity",
-            HookType.STATEMENT: "Open with a bold, attention-grabbing statement or claim",
-            HookType.VISUAL: "Begin with a striking, eye-catching visual moment",
-            HookType.STORY: "Start with a mini-story opening that hooks the viewer",
-            HookType.CONTRAST: "Open with a before/after or comparison setup",
-            HookType.MYSTERY: "Create a curiosity gap that makes viewers want to watch more",
+            HookType.QUESTION.value: "Start with a compelling question that creates curiosity",
+            HookType.STATEMENT.value: "Open with a bold, attention-grabbing statement or claim",
+            HookType.VISUAL.value: "Begin with a striking, eye-catching visual moment",
+            HookType.STORY.value: "Start with a mini-story opening that hooks the viewer",
+            HookType.CONTRAST.value: "Open with a before/after or comparison setup",
+            HookType.MYSTERY.value: "Create a curiosity gap that makes viewers want to watch more",
         }
-        return guidance.get(self.hook_type, guidance[HookType.STATEMENT])
+        return guidance.get(self.hook_type, guidance[HookType.STATEMENT.value])
 
     def get_ending_guidance(self) -> str:
         """Get guidance for the ending type."""
         guidance = {
-            EndingType.CLIFFHANGER: "End with a cliffhanger that leaves viewers wanting more, teasing a continuation or unanswered question",
-            EndingType.RESOLVE: "Provide a satisfying conclusion that wraps up the narrative completely",
-            EndingType.CTA: "End with a clear call to action (follow, like, comment, etc.)",
-            EndingType.LOOP: "Create an ending that loops back to the beginning seamlessly",
+            EndingType.CLIFFHANGER.value: "End with a cliffhanger that leaves viewers wanting more, teasing a continuation or unanswered question",
+            EndingType.RESOLVE.value: "Provide a satisfying conclusion that wraps up the narrative completely",
+            EndingType.CTA.value: "End with a clear call to action (follow, like, comment, etc.)",
+            EndingType.LOOP.value: "Create an ending that loops back to the beginning seamlessly",
         }
-        return guidance.get(self.ending_type, guidance[EndingType.RESOLVE])
+        return guidance.get(self.ending_type, guidance[EndingType.RESOLVE.value])
 
     def get_pacing_guidance(self) -> str:
         """Get pacing guidance based on narration and caption density."""
         narration_guidance = {
-            NarrationWPMBucket.SLOW: "slow, deliberate narration (~100-120 WPM) for emphasis and clarity",
-            NarrationWPMBucket.MEDIUM: "moderate narration pace (~120-160 WPM) for natural flow",
-            NarrationWPMBucket.FAST: "quick, energetic narration (~160-200 WPM) for excitement",
+            NarrationWPMBucket.SLOW.value: "slow, deliberate narration (~100-120 WPM) for emphasis and clarity",
+            NarrationWPMBucket.MEDIUM.value: "moderate narration pace (~120-160 WPM) for natural flow",
+            NarrationWPMBucket.FAST.value: "quick, energetic narration (~160-200 WPM) for excitement",
         }
 
         caption_guidance = {
-            CaptionDensityBucket.SPARSE: "minimal on-screen text, letting visuals speak",
-            CaptionDensityBucket.MEDIUM: "balanced caption beats at key moments",
-            CaptionDensityBucket.DENSE: "frequent on-screen text for maximum engagement",
+            CaptionDensityBucket.SPARSE.value: "minimal on-screen text, letting visuals speak",
+            CaptionDensityBucket.MEDIUM.value: "balanced caption beats at key moments",
+            CaptionDensityBucket.DENSE.value: "frequent on-screen text for maximum engagement",
         }
 
-        narration = narration_guidance.get(self.narration_wpm_bucket, narration_guidance[NarrationWPMBucket.MEDIUM])
-        captions = caption_guidance.get(self.caption_density_bucket, caption_guidance[CaptionDensityBucket.MEDIUM])
+        narration = narration_guidance.get(
+            self.narration_wpm_bucket, narration_guidance[NarrationWPMBucket.MEDIUM.value]
+        )
+        captions = caption_guidance.get(
+            self.caption_density_bucket, caption_guidance[CaptionDensityBucket.MEDIUM.value]
+        )
 
         return f"Use {narration} with {captions}"
 
@@ -273,14 +281,16 @@ Generate a video plan that brings this idea to life in the {preset.display_name}
                 # Pad with additional scenes
                 last_scene = data["scenes"][-1] if data["scenes"] else {}
                 while len(data["scenes"]) < constraints.scene_count:
-                    data["scenes"].append({
-                        **last_scene,
-                        "scene_number": len(data["scenes"]) + 1,
-                        "caption_beat": "...",
-                    })
+                    data["scenes"].append(
+                        {
+                            **last_scene,
+                            "scene_number": len(data["scenes"]) + 1,
+                            "caption_beat": "...",
+                        }
+                    )
             else:
                 # Trim excess scenes
-                data["scenes"] = data["scenes"][:constraints.scene_count]
+                data["scenes"] = data["scenes"][: constraints.scene_count]
 
         # Build ScenePlans
         scenes = []
@@ -289,9 +299,13 @@ Generate a video plan that brings this idea to life in the {preset.display_name}
                 ScenePlan(
                     scene_number=i + 1,
                     visual_prompt=scene_data.get("visual_prompt", ""),
-                    continuity_notes=scene_data.get("continuity_notes", preset.format_continuity_prompt()),
+                    continuity_notes=scene_data.get(
+                        "continuity_notes", preset.format_continuity_prompt()
+                    ),
                     caption_beat=scene_data.get("caption_beat", ""),
-                    duration_seconds=float(scene_data.get("duration_seconds", preset.default_duration_per_scene)),
+                    duration_seconds=float(
+                        scene_data.get("duration_seconds", preset.default_duration_per_scene)
+                    ),
                 )
             )
 

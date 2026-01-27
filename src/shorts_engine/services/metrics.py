@@ -1,18 +1,18 @@
 """Metrics collection and dashboard queries for pipeline monitoring."""
 
 import time
+from collections.abc import Generator
 from contextlib import contextmanager
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
-from typing import Any, Generator
+from datetime import UTC, datetime, timedelta
+from typing import Any
 from uuid import UUID, uuid4
 
-from sqlalchemy import func, text
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from shorts_engine.config import settings
 from shorts_engine.db.models import PipelineMetricModel, VideoJobModel
-from shorts_engine.db.session import get_session_context
 from shorts_engine.logging import get_logger
 
 logger = get_logger(__name__)
@@ -126,7 +126,7 @@ class MetricsCollector:
             value=value,
             labels=labels,
             video_job_id=video_job_id,
-            recorded_at=datetime.now(timezone.utc),
+            recorded_at=datetime.now(UTC),
         )
         session.add(metric)
 
@@ -273,9 +273,7 @@ def estimate_rendering_cost() -> float:
 def estimate_total_cost(scene_count: int = 7) -> float:
     """Estimate total cost per video."""
     return (
-        estimate_planning_cost()
-        + estimate_generation_cost(scene_count)
-        + estimate_rendering_cost()
+        estimate_planning_cost() + estimate_generation_cost(scene_count) + estimate_rendering_cost()
     )
 
 
@@ -301,7 +299,7 @@ class DashboardMetrics:
             .group_by(VideoJobModel.stage)
             .all()
         )
-        return {row.stage: row.count for row in result}
+        return {row.stage: row.count for row in result}  # type: ignore[misc]
 
     def get_success_rates(
         self,
@@ -315,7 +313,7 @@ class DashboardMetrics:
         Returns:
             Dict mapping stage to {"success_rate": float, "total": int}
         """
-        since = datetime.now(timezone.utc) - timedelta(hours=hours)
+        since = datetime.now(UTC) - timedelta(hours=hours)
 
         # Get completed counts by stage
         completed = (
@@ -373,7 +371,7 @@ class DashboardMetrics:
         Returns:
             Dict mapping stage to average duration in seconds
         """
-        since = datetime.now(timezone.utc) - timedelta(hours=hours)
+        since = datetime.now(UTC) - timedelta(hours=hours)
 
         result = (
             self.session.query(
@@ -402,7 +400,7 @@ class DashboardMetrics:
         Returns:
             Dict with total_cost, job_count, avg_cost_per_job
         """
-        since = datetime.now(timezone.utc) - timedelta(hours=hours)
+        since = datetime.now(UTC) - timedelta(hours=hours)
 
         result = (
             self.session.query(
@@ -416,8 +414,8 @@ class DashboardMetrics:
             .first()
         )
 
-        total = float(result.total) if result.total else 0.0
-        jobs = result.jobs or 0
+        total = float(result.total) if result and result.total else 0.0
+        jobs = result.jobs if result else 0
         avg = total / jobs if jobs > 0 else 0.0
 
         return {
@@ -439,7 +437,7 @@ class DashboardMetrics:
         Returns:
             Dict with pass_rate, total_checks, avg_hook_clarity, avg_coherence
         """
-        since = datetime.now(timezone.utc) - timedelta(hours=hours)
+        since = datetime.now(UTC) - timedelta(hours=hours)
 
         # Get pass/fail counts
         checks = (
@@ -515,7 +513,7 @@ def cleanup_old_metrics(session: Session, days: int | None = None) -> int:
         Number of deleted records
     """
     retention_days = days or settings.metrics_retention_days
-    cutoff = datetime.now(timezone.utc) - timedelta(days=retention_days)
+    cutoff = datetime.now(UTC) - timedelta(days=retention_days)
 
     result = (
         session.query(PipelineMetricModel)

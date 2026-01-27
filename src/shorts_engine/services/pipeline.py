@@ -99,7 +99,7 @@ class PipelineService:
 
     def _get_publishers(self) -> dict[Platform, PublisherAdapter]:
         """Get configured publisher adapters."""
-        publishers = {}
+        publishers: dict[Platform, PublisherAdapter] = {}
 
         if settings.publisher_youtube_enabled:
             publishers[Platform.YOUTUBE] = StubPublisherAdapter(Platform.YOUTUBE)
@@ -118,13 +118,11 @@ class PipelineService:
 
     def _get_analytics_adapters(self) -> dict[Platform, AnalyticsAdapter]:
         """Get analytics adapters for configured platforms."""
-        return {
-            platform: StubAnalyticsAdapter(platform) for platform in self.publishers.keys()
-        }
+        return {platform: StubAnalyticsAdapter(platform) for platform in self.publishers}
 
     def _get_comments_adapters(self) -> dict[Platform, CommentsAdapter]:
         """Get comments adapters for configured platforms."""
-        return {platform: StubCommentsAdapter(platform) for platform in self.publishers.keys()}
+        return {platform: StubCommentsAdapter(platform) for platform in self.publishers}
 
     async def health_check(self) -> dict[str, bool]:
         """Check health of all pipeline components."""

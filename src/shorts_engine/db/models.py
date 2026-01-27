@@ -43,9 +43,7 @@ class ProjectModel(Base):
     default_style_preset: Mapped[str | None] = mapped_column(String(100), nullable=True)
     settings: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
     is_active: Mapped[bool] = mapped_column(Boolean, server_default="true", index=True)
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now()
-    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), onupdate=func.now()
     )
@@ -79,9 +77,7 @@ class VideoJobModel(Base):
     metadata_: Mapped[dict[str, Any] | None] = mapped_column("metadata_", JSONB, nullable=True)
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now()
-    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), onupdate=func.now()
     )
@@ -92,7 +88,9 @@ class VideoJobModel(Base):
     experiment_id: Mapped[PyUUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("experiments.id", ondelete="SET NULL"), nullable=True
     )
-    generation_mode: Mapped[str | None] = mapped_column(String(20), nullable=True)  # exploit, explore, manual
+    generation_mode: Mapped[str | None] = mapped_column(
+        String(20), nullable=True
+    )  # exploit, explore, manual
     batch_id: Mapped[PyUUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("planned_batches.id", ondelete="SET NULL"), nullable=True
     )
@@ -111,11 +109,12 @@ class VideoJobModel(Base):
         "AssetModel", back_populates="video_job", cascade="all, delete-orphan"
     )
     recipe_features: Mapped["VideoRecipeFeaturesModel | None"] = relationship(
-        "VideoRecipeFeaturesModel", back_populates="video_job", uselist=False, cascade="all, delete-orphan"
+        "VideoRecipeFeaturesModel",
+        back_populates="video_job",
+        uselist=False,
+        cascade="all, delete-orphan",
     )
-    recipe: Mapped["RecipeModel | None"] = relationship(
-        "RecipeModel", back_populates="video_jobs"
-    )
+    recipe: Mapped["RecipeModel | None"] = relationship("RecipeModel", back_populates="video_jobs")
     experiment: Mapped["ExperimentModel | None"] = relationship(
         "ExperimentModel", back_populates="video_jobs"
     )
@@ -145,17 +144,13 @@ class SceneModel(Base):
     generation_attempts: Mapped[int] = mapped_column(Integer, server_default="0")
     last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
     metadata_: Mapped[dict[str, Any] | None] = mapped_column("metadata_", JSONB, nullable=True)
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now()
-    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), onupdate=func.now()
     )
 
     # Constraints
-    __table_args__ = (
-        UniqueConstraint("video_job_id", "scene_number", name="uq_scene_number"),
-    )
+    __table_args__ = (UniqueConstraint("video_job_id", "scene_number", name="uq_scene_number"),)
 
     # Relationships
     video_job: Mapped["VideoJobModel"] = relationship("VideoJobModel", back_populates="scenes")
@@ -192,9 +187,7 @@ class AssetModel(Base):
     height: Mapped[int | None] = mapped_column(Integer, nullable=True)
     status: Mapped[str] = mapped_column(String(50), server_default="pending", index=True)
     metadata_: Mapped[dict[str, Any] | None] = mapped_column("metadata_", JSONB, nullable=True)
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now()
-    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), onupdate=func.now()
     )
@@ -219,9 +212,7 @@ class PromptModel(Base):
     version: Mapped[int] = mapped_column(Integer, server_default="1")
     is_final: Mapped[bool] = mapped_column(Boolean, server_default="false")
     metadata_: Mapped[dict[str, Any] | None] = mapped_column("metadata_", JSONB, nullable=True)
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now()
-    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     # Relationships
     scene: Mapped["SceneModel"] = relationship("SceneModel", back_populates="prompts")
@@ -274,9 +265,7 @@ class PublishResultModel(Base):
     status: Mapped[str] = mapped_column(String(50), default="pending")
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
     published_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now()
-    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), onupdate=func.now()
     )
@@ -337,9 +326,7 @@ class CommentModel(Base):
     sentiment: Mapped[str | None] = mapped_column(String(50), nullable=True)
     likes: Mapped[int] = mapped_column(Integer, default=0)
     posted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
-    fetched_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now()
-    )
+    fetched_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     # Constraints
     __table_args__ = (
@@ -366,9 +353,7 @@ class JobModel(Base):
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now()
-    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
 # =============================================================================
@@ -388,24 +373,26 @@ class PlatformAccountModel(Base):
     external_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
     encrypted_refresh_token: Mapped[str | None] = mapped_column(Text, nullable=True)
     encrypted_access_token: Mapped[str | None] = mapped_column(Text, nullable=True)
-    token_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    token_expires_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     scopes: Mapped[str | None] = mapped_column(Text, nullable=True)
     status: Mapped[str] = mapped_column(String(50), server_default="active", index=True)
     uploads_today: Mapped[int] = mapped_column(Integer, server_default="0")
-    uploads_reset_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
-    capabilities: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)  # e.g., {direct_post: true}
-    metadata_: Mapped[dict[str, Any] | None] = mapped_column("metadata_", JSONB, nullable=True)
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now()
+    uploads_reset_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
     )
+    capabilities: Mapped[dict[str, Any] | None] = mapped_column(
+        JSONB, nullable=True
+    )  # e.g., {direct_post: true}
+    metadata_: Mapped[dict[str, Any] | None] = mapped_column("metadata_", JSONB, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), onupdate=func.now()
     )
 
     # Constraints
-    __table_args__ = (
-        UniqueConstraint("platform", "label", name="uq_platform_label"),
-    )
+    __table_args__ = (UniqueConstraint("platform", "label", name="uq_platform_label"),)
 
     # Relationships
     account_projects: Mapped[list["AccountProjectModel"]] = relationship(
@@ -429,14 +416,10 @@ class AccountProjectModel(Base):
         UUID(as_uuid=True), ForeignKey("projects.id", ondelete="CASCADE"), index=True
     )
     is_default: Mapped[bool] = mapped_column(Boolean, server_default="false")
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now()
-    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     # Constraints
-    __table_args__ = (
-        UniqueConstraint("account_id", "project_id", name="uq_account_project"),
-    )
+    __table_args__ = (UniqueConstraint("account_id", "project_id", name="uq_account_project"),)
 
     # Relationships
     account: Mapped["PlatformAccountModel"] = relationship(
@@ -461,8 +444,12 @@ class PublishJobModel(Base):
     status: Mapped[str] = mapped_column(String(50), server_default="pending", index=True)
     platform_video_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
     platform_url: Mapped[str | None] = mapped_column(String(2048), nullable=True)
-    scheduled_publish_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
-    actual_publish_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    scheduled_publish_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    actual_publish_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     visibility: Mapped[str] = mapped_column(String(50), server_default="public")
     forced_private: Mapped[bool] = mapped_column(Boolean, server_default="false")
     title: Mapped[str | None] = mapped_column(String(255), nullable=True)
@@ -473,12 +460,14 @@ class PublishJobModel(Base):
     dry_run: Mapped[bool] = mapped_column(Boolean, server_default="false")
     dry_run_payload: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
     api_response: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
-    manual_publish_path: Mapped[str | None] = mapped_column(String(1024), nullable=True)  # For NEEDS_MANUAL_PUBLISH
-    share_url: Mapped[str | None] = mapped_column(String(2048), nullable=True)  # TikTok Share Intent fallback
+    manual_publish_path: Mapped[str | None] = mapped_column(
+        String(1024), nullable=True
+    )  # For NEEDS_MANUAL_PUBLISH
+    share_url: Mapped[str | None] = mapped_column(
+        String(2048), nullable=True
+    )  # TikTok Share Intent fallback
     metadata_: Mapped[dict[str, Any] | None] = mapped_column("metadata_", JSONB, nullable=True)
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now()
-    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), onupdate=func.now()
     )
@@ -530,16 +519,14 @@ class VideoMetricsModel(Base):
     reward_score: Mapped[float | None] = mapped_column(Float, nullable=True)
     # Raw data
     raw_data: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
-    fetched_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now()
-    )
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now()
-    )
+    fetched_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     # Constraints
     __table_args__ = (
-        UniqueConstraint("publish_job_id", "window_type", "window_start", name="uq_video_metrics_window"),
+        UniqueConstraint(
+            "publish_job_id", "window_type", "window_start", name="uq_video_metrics_window"
+        ),
     )
 
     # Relationships
@@ -568,12 +555,8 @@ class VideoCommentModel(Base):
     sentiment: Mapped[str | None] = mapped_column(String(20), nullable=True)
     sentiment_score: Mapped[float | None] = mapped_column(Float, nullable=True)
     raw_data: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
-    fetched_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now()
-    )
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now()
-    )
+    fetched_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     # Constraints
     __table_args__ = (
@@ -616,20 +599,18 @@ class VideoRecipeFeaturesModel(Base):
     style_preset: Mapped[str | None] = mapped_column(String(100), nullable=True)
     aspect_ratio: Mapped[str | None] = mapped_column(String(20), nullable=True)
     # Ending
-    ending_type: Mapped[str | None] = mapped_column(String(50), nullable=True)  # cliffhanger, resolve
+    ending_type: Mapped[str | None] = mapped_column(
+        String(50), nullable=True
+    )  # cliffhanger, resolve
     # Raw feature vector for ML
     feature_vector: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now()
-    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), onupdate=func.now()
     )
 
     # Constraints
-    __table_args__ = (
-        UniqueConstraint("video_job_id", name="uq_video_recipe_features_job"),
-    )
+    __table_args__ = (UniqueConstraint("video_job_id", name="uq_video_recipe_features_job"),)
 
     # Relationships
     video_job: Mapped["VideoJobModel"] = relationship(
@@ -655,8 +636,12 @@ class RecipeModel(Base):
     preset: Mapped[str] = mapped_column(String(100), nullable=False)
     hook_type: Mapped[str] = mapped_column(String(50), nullable=False)
     scene_count: Mapped[int] = mapped_column(Integer, nullable=False)
-    narration_wpm_bucket: Mapped[str] = mapped_column(String(20), nullable=False)  # slow, medium, fast
-    caption_density_bucket: Mapped[str] = mapped_column(String(20), nullable=False)  # sparse, medium, dense
+    narration_wpm_bucket: Mapped[str] = mapped_column(
+        String(20), nullable=False
+    )  # slow, medium, fast
+    caption_density_bucket: Mapped[str] = mapped_column(
+        String(20), nullable=False
+    )  # sparse, medium, dense
     ending_type: Mapped[str] = mapped_column(String(50), nullable=False)  # cliffhanger, resolve
     # Recipe hash for deduplication
     recipe_hash: Mapped[str] = mapped_column(String(64), nullable=False, unique=True)
@@ -666,9 +651,7 @@ class RecipeModel(Base):
     best_reward_score: Mapped[float | None] = mapped_column(Float, nullable=True)
     last_used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     # Metadata
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now()
-    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), onupdate=func.now()
     )
@@ -679,7 +662,9 @@ class RecipeModel(Base):
         "VideoJobModel", back_populates="recipe"
     )
     experiments: Mapped[list["ExperimentModel"]] = relationship(
-        "ExperimentModel", back_populates="baseline_recipe", foreign_keys="ExperimentModel.baseline_recipe_id"
+        "ExperimentModel",
+        back_populates="baseline_recipe",
+        foreign_keys="ExperimentModel.baseline_recipe_id",
     )
 
 
@@ -711,13 +696,9 @@ class ExperimentModel(Base):
     winner: Mapped[str | None] = mapped_column(String(20), nullable=True)
     confidence: Mapped[float | None] = mapped_column(Float, nullable=True)
     # Timestamps
-    started_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now()
-    )
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now()
-    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     # Relationships
     project: Mapped["ProjectModel"] = relationship("ProjectModel")
@@ -749,9 +730,7 @@ class PlannedBatchModel(Base):
     jobs_completed: Mapped[int] = mapped_column(Integer, server_default="0")
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
     # Timestamps
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now()
-    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
@@ -776,7 +755,9 @@ class QAResultModel(Base):
     video_job_id: Mapped[PyUUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("video_jobs.id", ondelete="CASCADE"), index=True
     )
-    check_type: Mapped[str] = mapped_column(String(50), nullable=False, index=True)  # plan_qa, render_qa
+    check_type: Mapped[str] = mapped_column(
+        String(50), nullable=False, index=True
+    )  # plan_qa, render_qa
     stage: Mapped[str] = mapped_column(String(50), nullable=False)  # post_planning, post_render
     attempt_number: Mapped[int] = mapped_column(Integer, nullable=False)
     passed: Mapped[bool] = mapped_column(Boolean, nullable=False, index=True)
@@ -795,14 +776,10 @@ class QAResultModel(Base):
     model_used: Mapped[str | None] = mapped_column(String(100), nullable=True)
     duration_seconds: Mapped[float | None] = mapped_column(Float, nullable=True)
     # Timestamps
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now()
-    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     # Relationships
-    video_job: Mapped["VideoJobModel"] = relationship(
-        "VideoJobModel", back_populates="qa_results"
-    )
+    video_job: Mapped["VideoJobModel"] = relationship("VideoJobModel", back_populates="qa_results")
 
 
 class PipelineMetricModel(Base):
@@ -812,11 +789,16 @@ class PipelineMetricModel(Base):
 
     id: Mapped[PyUUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid4)
     metric_name: Mapped[str] = mapped_column(String(100), nullable=False, index=True)
-    metric_type: Mapped[str] = mapped_column(String(20), nullable=False)  # counter, gauge, histogram
+    metric_type: Mapped[str] = mapped_column(
+        String(20), nullable=False
+    )  # counter, gauge, histogram
     value: Mapped[float] = mapped_column(Float, nullable=False)
     labels: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
     video_job_id: Mapped[PyUUID | None] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("video_jobs.id", ondelete="SET NULL"), nullable=True, index=True
+        UUID(as_uuid=True),
+        ForeignKey("video_jobs.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
     )
     recorded_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), index=True

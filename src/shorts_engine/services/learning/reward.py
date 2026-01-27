@@ -16,10 +16,10 @@ comparable scores across different content types and audience sizes.
 """
 
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
-from sqlalchemy import select, func
+from sqlalchemy import select, update
 from sqlalchemy.orm import Session
 
 from shorts_engine.db.models import (
@@ -99,20 +99,24 @@ class RewardCalculator:
         Returns:
             List of metrics for the project
         """
-        cutoff = datetime.now(timezone.utc) - timedelta(days=lookback_days)
+        cutoff = datetime.now(UTC) - timedelta(days=lookback_days)
 
         # Get metrics for published videos in this project
-        metrics = self.session.execute(
-            select(VideoMetricsModel)
-            .join(PublishJobModel, VideoMetricsModel.publish_job_id == PublishJobModel.id)
-            .join(VideoJobModel, PublishJobModel.video_job_id == VideoJobModel.id)
-            .where(
-                VideoJobModel.project_id == self.project_id,
-                PublishJobModel.status == "published",
-                PublishJobModel.actual_publish_at >= cutoff,
-                VideoMetricsModel.window_type == window_type,
+        metrics = (
+            self.session.execute(
+                select(VideoMetricsModel)
+                .join(PublishJobModel, VideoMetricsModel.publish_job_id == PublishJobModel.id)
+                .join(VideoJobModel, PublishJobModel.video_job_id == VideoJobModel.id)
+                .where(
+                    VideoJobModel.project_id == self.project_id,
+                    PublishJobModel.status == "published",
+                    PublishJobModel.actual_publish_at >= cutoff,
+                    VideoMetricsModel.window_type == window_type,
+                )
             )
-        ).scalars().all()
+            .scalars()
+            .all()
+        )
 
         return list(metrics)
 
@@ -135,11 +139,13 @@ class RewardCalculator:
 
         # Extract sorted values for each metric
         self._percentile_cache["avg_view_duration"] = sorted(
-            [m.avg_view_duration_seconds for m in metrics if m.avg_view_duration_seconds is not None]
+            [
+                m.avg_view_duration_seconds
+                for m in metrics
+                if m.avg_view_duration_seconds is not None
+            ]
         )
-        self._percentile_cache["views"] = sorted(
-            [m.views for m in metrics if m.views is not None]
-        )
+        self._percentile_cache["views"] = sorted([m.views for m in metrics if m.views is not None])
 
         # Compute engagement rates
         engagement_rates = []
@@ -179,6 +185,7 @@ class RewardCalculator:
 
         # Find percentile using binary search
         import bisect
+
         rank = bisect.bisect_left(distribution, value)
         return rank / len(distribution) if distribution else 0.5
 
@@ -280,18 +287,22 @@ class RewardCalculator:
         """
         self._build_percentile_distributions(lookback_days)
 
-        cutoff = datetime.now(timezone.utc) - timedelta(days=lookback_days)
+        cutoff = datetime.now(UTC) - timedelta(days=lookback_days)
 
         # Get all publish jobs for this project
-        publish_jobs = self.session.execute(
-            select(PublishJobModel.id)
-            .join(VideoJobModel, PublishJobModel.video_job_id == VideoJobModel.id)
-            .where(
-                VideoJobModel.project_id == self.project_id,
-                PublishJobModel.status == "published",
-                PublishJobModel.actual_publish_at >= cutoff,
+        publish_jobs = (
+            self.session.execute(
+                select(PublishJobModel.id)
+                .join(VideoJobModel, PublishJobModel.video_job_id == VideoJobModel.id)
+                .where(
+                    VideoJobModel.project_id == self.project_id,
+                    PublishJobModel.status == "published",
+                    PublishJobModel.actual_publish_at >= cutoff,
+                )
             )
-        ).scalars().all()
+            .scalars()
+            .all()
+        )
 
         updated = 0
         for job_id in publish_jobs:
@@ -299,7 +310,7 @@ class RewardCalculator:
             if score:
                 # Update all metrics for this job
                 self.session.execute(
-                    VideoMetricsModel.__table__.update()
+                    update(VideoMetricsModel)
                     .where(VideoMetricsModel.publish_job_id == job_id)
                     .values(reward_score=score.total)
                 )

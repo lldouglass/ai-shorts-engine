@@ -60,8 +60,12 @@ class AnthropicProvider(LLMProvider):
 
         # Add JSON instruction to system prompt if json_mode
         if json_mode:
-            json_instruction = "\n\nIMPORTANT: You must respond with valid JSON only. No other text."
-            system_message = system_message + json_instruction if system_message else json_instruction
+            json_instruction = (
+                "\n\nIMPORTANT: You must respond with valid JSON only. No other text."
+            )
+            system_message = (
+                system_message + json_instruction if system_message else json_instruction
+            )
 
         payload: dict[str, Any] = {
             "model": self.model,

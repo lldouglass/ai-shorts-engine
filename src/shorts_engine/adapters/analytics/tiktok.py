@@ -1,9 +1,7 @@
 """TikTok Analytics adapter using TikTok API."""
 
-import asyncio
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
-from typing import Any
+from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
 import httpx
@@ -17,9 +15,9 @@ from shorts_engine.db.session import get_session_context
 from shorts_engine.domain.enums import Platform
 from shorts_engine.logging import get_logger
 from shorts_engine.services.accounts import (
-    get_account_state,
-    update_account_tokens,
+    get_tiktok_account_state,
     mark_account_revoked,
+    update_account_tokens,
 )
 
 logger = get_logger(__name__)
@@ -77,39 +75,40 @@ class TikTokAnalyticsAdapter(AnalyticsAdapter):
             TikTokOAuthError: If token refresh fails.
         """
         with get_session_context() as session:
-            account_state = get_account_state(session, self.account_id)
+            account_state = get_tiktok_account_state(session, self.account_id)
 
-            # Get open_id from metadata
-            metadata = account_state.metadata_ or {}
-            open_id = metadata.get("open_id", "")
+            # Get open_id from account state
+            open_id = account_state.open_id
 
             # Check if token needs refresh (1 hour before expiry)
-            if account_state.token_expires_at:
-                if account_state.token_expires_at < datetime.now(timezone.utc) + timedelta(hours=1):
-                    logger.debug("tiktok_token_refresh", account_id=str(self.account_id))
-                    try:
-                        # Need refresh token from metadata
-                        refresh_token = metadata.get("refresh_token", "")
-                        if not refresh_token:
-                            raise TikTokOAuthError("No refresh token available")
+            if (
+                account_state.token_expires_at
+                and account_state.token_expires_at < datetime.now(UTC) + timedelta(hours=1)
+            ):
+                logger.debug("tiktok_token_refresh", account_id=str(self.account_id))
+                try:
+                    # Get refresh token from account state
+                    refresh_token = account_state.refresh_token
+                    if not refresh_token:
+                        raise TikTokOAuthError("No refresh token available")
 
-                        token_data = refresh_tiktok_token(refresh_token)
-                        new_expires = datetime.now(timezone.utc) + timedelta(
-                            seconds=token_data.get("expires_in", 86400)
-                        )
-                        update_account_tokens(
-                            session, self.account_id, token_data["access_token"], new_expires
-                        )
+                    token_data = refresh_tiktok_token(refresh_token)
+                    new_expires = datetime.now(UTC) + timedelta(
+                        seconds=token_data.get("expires_in", 86400)
+                    )
+                    update_account_tokens(
+                        session, self.account_id, token_data["access_token"], new_expires
+                    )
 
-                        # Update open_id if provided
-                        if token_data.get("open_id"):
-                            open_id = token_data["open_id"]
+                    # Update open_id if provided
+                    if token_data.get("open_id"):
+                        open_id = token_data["open_id"]
 
-                        return token_data["access_token"], open_id
-                    except TikTokOAuthError as e:
-                        if "expired" in str(e).lower() or "invalid" in str(e).lower():
-                            mark_account_revoked(session, self.account_id, str(e))
-                        raise
+                    return token_data["access_token"], open_id
+                except TikTokOAuthError as e:
+                    if "expired" in str(e).lower() or "invalid" in str(e).lower():
+                        mark_account_revoked(session, self.account_id, str(e))
+                    raise
 
             return account_state.access_token, open_id
 
@@ -183,7 +182,7 @@ class TikTokAnalyticsAdapter(AnalyticsAdapter):
         return MetricsSnapshot(
             platform=self.platform,
             platform_video_id=platform_video_id,
-            fetched_at=datetime.now(timezone.utc),
+            fetched_at=datetime.now(UTC),
             views=views,
             likes=likes,
             comments_count=comments,
@@ -213,7 +212,7 @@ class TikTokAnalyticsAdapter(AnalyticsAdapter):
         Returns:
             List of WindowedMetrics (currently just lifetime metrics).
         """
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         windows = []
 
         try:
@@ -238,8 +237,8 @@ class TikTokAnalyticsAdapter(AnalyticsAdapter):
     async def fetch_historical_metrics(
         self,
         platform_video_id: str,
-        start_date: datetime,
-        end_date: datetime,
+        _start_date: datetime,
+        _end_date: datetime,
     ) -> list[MetricsSnapshot]:
         """Fetch historical metrics for a date range.
 

@@ -1,20 +1,21 @@
 """YouTube Comments adapter using Data API."""
 
-from datetime import datetime, timedelta, timezone
+import contextlib
+from datetime import UTC, datetime, timedelta
 from typing import Any
 from uuid import UUID
 
 import httpx
 
-from shorts_engine.adapters.comments.base import CommentsAdapter, CommentData
-from shorts_engine.adapters.publisher.youtube_oauth import refresh_access_token, OAuthError
+from shorts_engine.adapters.comments.base import CommentData, CommentsAdapter
+from shorts_engine.adapters.publisher.youtube_oauth import OAuthError, refresh_access_token
 from shorts_engine.db.session import get_session_context
 from shorts_engine.domain.enums import Platform
 from shorts_engine.logging import get_logger
 from shorts_engine.services.accounts import (
     get_account_state,
-    update_account_tokens,
     mark_account_revoked,
+    update_account_tokens,
 )
 
 logger = get_logger(__name__)
@@ -62,22 +63,24 @@ class YouTubeCommentsAdapter(CommentsAdapter):
             account_state = get_account_state(session, self.account_id)
 
             # Check if token needs refresh (5 min buffer)
-            if account_state.token_expires_at:
-                if account_state.token_expires_at < datetime.now(timezone.utc) + timedelta(minutes=5):
-                    logger.debug("youtube_token_refresh", account_id=str(self.account_id))
-                    try:
-                        token_data = refresh_access_token(account_state.refresh_token)
-                        new_expires = datetime.now(timezone.utc) + timedelta(
-                            seconds=token_data["expires_in"]
-                        )
-                        update_account_tokens(
-                            session, self.account_id, token_data["access_token"], new_expires
-                        )
-                        return token_data["access_token"]
-                    except OAuthError as e:
-                        if "invalid_grant" in str(e):
-                            mark_account_revoked(session, self.account_id, str(e))
-                        raise
+            if (
+                account_state.token_expires_at
+                and account_state.token_expires_at < datetime.now(UTC) + timedelta(minutes=5)
+            ):
+                logger.debug("youtube_token_refresh", account_id=str(self.account_id))
+                try:
+                    token_data = refresh_access_token(account_state.refresh_token)
+                    new_expires = datetime.now(UTC) + timedelta(
+                        seconds=token_data["expires_in"]
+                    )
+                    update_account_tokens(
+                        session, self.account_id, token_data["access_token"], new_expires
+                    )
+                    return str(token_data["access_token"])
+                except OAuthError as e:
+                    if "invalid_grant" in str(e):
+                        mark_account_revoked(session, self.account_id, str(e))
+                    raise
 
             return account_state.access_token
 
@@ -100,7 +103,7 @@ class YouTubeCommentsAdapter(CommentsAdapter):
         access_token = await self._get_access_token()
         client = await self._get_client()
 
-        comments = []
+        comments: list[CommentData] = []
         page_token = None
 
         while len(comments) < max_results:
@@ -165,12 +168,10 @@ class YouTubeCommentsAdapter(CommentsAdapter):
 
                 published_at = None
                 if snippet.get("publishedAt"):
-                    try:
+                    with contextlib.suppress(ValueError):
                         published_at = datetime.fromisoformat(
                             snippet["publishedAt"].replace("Z", "+00:00")
                         )
-                    except ValueError:
-                        pass
 
                 # Filter by since if provided
                 if since and published_at and published_at < since:
@@ -213,7 +214,7 @@ class YouTubeCommentsAdapter(CommentsAdapter):
         self,
         platform_video_id: str,
         platform_comment_id: str,
-        text: str,
+        _text: str,
     ) -> CommentData | None:
         """Reply to a comment.
 

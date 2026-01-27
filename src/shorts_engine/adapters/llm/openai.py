@@ -1,6 +1,5 @@
 """OpenAI LLM provider implementation."""
 
-import json
 from typing import Any
 
 import httpx

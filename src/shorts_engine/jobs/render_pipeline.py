@@ -11,35 +11,37 @@ All tasks support:
 - Proper error handling and status updates
 """
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
-from uuid import UUID, uuid4
+from uuid import UUID
 
 from celery import chain
 from sqlalchemy import select
 
+from shorts_engine.adapters.renderer.base import RendererProvider
 from shorts_engine.adapters.renderer.creatomate import (
     CreatomateProvider,
     CreatomateRenderRequest,
     SceneClip,
 )
 from shorts_engine.adapters.renderer.stub import StubRendererProvider
+from shorts_engine.adapters.voiceover.base import VoiceoverProvider
 from shorts_engine.adapters.voiceover.edge_tts import EdgeTTSProvider
 from shorts_engine.adapters.voiceover.elevenlabs import ElevenLabsProvider
 from shorts_engine.adapters.voiceover.stub import StubVoiceoverProvider
 from shorts_engine.config import settings
 from shorts_engine.db.models import AssetModel, SceneModel, VideoJobModel
 from shorts_engine.db.session import get_session_context
-from shorts_engine.domain.enums import QACheckType, QAStage, QAStatus
+from shorts_engine.domain.enums import QACheckType, QAStage
 from shorts_engine.logging import get_logger
-from shorts_engine.services.alerting import alert_pipeline_failure, alert_qa_failure
+from shorts_engine.services.alerting import alert_qa_failure
 from shorts_engine.services.metrics import (
+    estimate_rendering_cost,
+    record_cost_estimate,
     record_job_completed,
     record_job_failed,
     record_job_started,
     record_qa_check,
-    record_cost_estimate,
-    estimate_rendering_cost,
 )
 from shorts_engine.services.qa import QAService
 from shorts_engine.services.storage import StorageService
@@ -49,7 +51,7 @@ from shorts_engine.worker import celery_app
 logger = get_logger(__name__)
 
 
-def get_voiceover_provider():
+def get_voiceover_provider() -> VoiceoverProvider:
     """Get the configured voiceover provider."""
     provider = getattr(settings, "voiceover_provider", "stub").lower()
 
@@ -61,7 +63,7 @@ def get_voiceover_provider():
         return StubVoiceoverProvider()
 
 
-def get_renderer_provider():
+def get_renderer_provider() -> RendererProvider:
     """Get the configured renderer provider."""
     provider = getattr(settings, "renderer_provider", "stub").lower()
 
@@ -86,7 +88,7 @@ def get_renderer_provider():
     retry_backoff_max=300,
 )
 def generate_voiceover_task(
-    self,
+    self: Any,  # noqa: ARG001
     video_job_id: str,
     narration_script: str | None = None,
     voice_id: str | None = None,
@@ -132,11 +134,15 @@ def generate_voiceover_task(
 
         # Build narration script from caption beats if not provided
         if not narration_script:
-            scenes = session.execute(
-                select(SceneModel)
-                .where(SceneModel.video_job_id == job_uuid)
-                .order_by(SceneModel.scene_number)
-            ).scalars().all()
+            scenes = (
+                session.execute(
+                    select(SceneModel)
+                    .where(SceneModel.video_job_id == job_uuid)
+                    .order_by(SceneModel.scene_number)
+                )
+                .scalars()
+                .all()
+            )
 
             if not scenes:
                 return {
@@ -175,6 +181,9 @@ def generate_voiceover_task(
 
             if not result.success:
                 raise RuntimeError(f"Voiceover generation failed: {result.error_message}")
+
+            if not result.audio_data:
+                raise RuntimeError("Voiceover generation returned no audio data")
 
             # Store the voiceover asset
             storage = StorageService()
@@ -244,7 +253,7 @@ def generate_voiceover_task(
     retry_backoff_max=600,
 )
 def render_final_video_task(
-    self,
+    self: Any,  # noqa: ARG001
     video_job_id: str,
     voiceover_result: dict[str, Any] | None = None,
     include_captions: bool = True,
@@ -295,11 +304,15 @@ def render_final_video_task(
         session.commit()
 
         # Gather scene clips
-        scenes = session.execute(
-            select(SceneModel)
-            .where(SceneModel.video_job_id == job_uuid)
-            .order_by(SceneModel.scene_number)
-        ).scalars().all()
+        scenes = (
+            session.execute(
+                select(SceneModel)
+                .where(SceneModel.video_job_id == job_uuid)
+                .order_by(SceneModel.scene_number)
+            )
+            .scalars()
+            .all()
+        )
 
         if not scenes:
             raise ValueError("No scenes found for rendering")
@@ -328,16 +341,22 @@ def render_final_video_task(
             if not clip_url:
                 raise ValueError(f"No URL available for scene {scene.scene_number} clip")
 
-            scene_clips.append(SceneClip(
-                video_url=clip_url,
-                duration_seconds=scene.duration_seconds,
-                caption_text=scene.caption_beat if include_captions else None,
-                scene_number=scene.scene_number,
-            ))
+            scene_clips.append(
+                SceneClip(
+                    video_url=clip_url,
+                    duration_seconds=scene.duration_seconds,
+                    caption_text=scene.caption_beat if include_captions else None,
+                    scene_number=scene.scene_number,
+                )
+            )
 
         # Get voiceover URL if available
         voiceover_url = None
-        if voiceover_result and voiceover_result.get("success") and not voiceover_result.get("skipped"):
+        if (
+            voiceover_result
+            and voiceover_result.get("success")
+            and not voiceover_result.get("skipped")
+        ):
             voiceover_url = voiceover_result.get("url")
 
         # If no voiceover from result, check for existing asset
@@ -372,11 +391,11 @@ def render_final_video_task(
                 # Stub provider - simulate rendering
                 from shorts_engine.adapters.renderer.base import RenderRequest
 
-                request = RenderRequest(
+                stub_request = RenderRequest(
                     video_data=b"",  # Stub doesn't use this
                     resolution="1080x1920",
                 )
-                result = run_async(provider.render(request))
+                result = run_async(provider.render(stub_request))
 
             if not result.success:
                 job.stage = "render_failed"
@@ -401,7 +420,9 @@ def render_final_video_task(
                         video_job_id=job_uuid,
                         metadata={
                             "provider": provider.name,
-                            "render_id": result.metadata.get("render_id") if result.metadata else None,
+                            "render_id": (
+                                result.metadata.get("render_id") if result.metadata else None
+                            ),
                         },
                     )
                 )
@@ -469,7 +490,7 @@ def render_final_video_task(
     name="render.mark_ready_to_publish",
 )
 def mark_ready_to_publish_task(
-    self,
+    self: Any,
     video_job_id: str,
     render_result: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
@@ -487,7 +508,7 @@ def mark_ready_to_publish_task(
     """
     task_id = self.request.id
     job_uuid = UUID(video_job_id)
-    start_time = datetime.now(timezone.utc)
+    start_time = datetime.now(UTC)
 
     logger.info("mark_ready_to_publish_started", task_id=task_id, video_job_id=video_job_id)
 
@@ -570,17 +591,19 @@ def mark_ready_to_publish_task(
                 session.commit()
 
                 # Send alert
-                run_async(alert_qa_failure(
-                    video_job_id=job_uuid,
-                    qa_stage="post_render",
-                    feedback=qa_result.feedback,
-                    attempt=1,
-                    max_attempts=1,
-                    scores={
-                        "policy_passed": qa_result.policy_passed,
-                        "policy_violations": qa_result.policy_violations,
-                    },
-                ))
+                run_async(
+                    alert_qa_failure(
+                        video_job_id=job_uuid,
+                        qa_stage="post_render",
+                        feedback=qa_result.feedback,
+                        attempt=1,
+                        max_attempts=1,
+                        scores={
+                            "policy_passed": qa_result.policy_passed,  # type: ignore[dict-item]
+                            "policy_violations": qa_result.policy_violations,  # type: ignore[dict-item]
+                        },
+                    )
+                )
 
                 logger.warning(
                     "render_qa_failed",
@@ -605,7 +628,7 @@ def mark_ready_to_publish_task(
         # Update job status
         job.status = "completed"
         job.stage = "ready_to_publish"
-        job.completed_at = datetime.now(timezone.utc)
+        job.completed_at = datetime.now(UTC)
 
         # Store final URL in metadata
         job.metadata_ = job.metadata_ or {}
@@ -613,7 +636,7 @@ def mark_ready_to_publish_task(
         job.metadata_["final_asset_id"] = str(final_asset.id)
 
         # Record success metrics
-        duration = (datetime.now(timezone.utc) - start_time).total_seconds()
+        duration = (datetime.now(UTC) - start_time).total_seconds()
         record_job_completed(session, job_uuid, "post_render", duration)
         record_cost_estimate(session, job_uuid, estimate_rendering_cost())
 
@@ -647,7 +670,7 @@ def mark_ready_to_publish_task(
     name="render.run_render_pipeline",
 )
 def run_render_pipeline_task(
-    self,
+    self: Any,  # noqa: ARG001
     video_job_id: str,
     include_voiceover: bool = True,
     include_captions: bool = True,
@@ -715,5 +738,9 @@ def run_render_pipeline_task(
         "success": True,
         "video_job_id": video_job_id,
         "pipeline_task_id": result.id,
-        "stages": ["voiceover", "render", "ready_to_publish"] if include_voiceover else ["render", "ready_to_publish"],
+        "stages": (
+            ["voiceover", "render", "ready_to_publish"]
+            if include_voiceover
+            else ["render", "ready_to_publish"]
+        ),
     }

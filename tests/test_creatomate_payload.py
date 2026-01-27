@@ -1,6 +1,5 @@
 """Unit tests for Creatomate payload building."""
 
-import pytest
 
 from shorts_engine.adapters.renderer.creatomate import (
     CreatomateProvider,

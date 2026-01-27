@@ -1,7 +1,6 @@
 """Asset storage service for video files and metadata."""
 
 import hashlib
-import shutil
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -10,7 +9,6 @@ from uuid import UUID, uuid4
 
 import httpx
 
-from shorts_engine.config import settings
 from shorts_engine.logging import get_logger
 
 logger = get_logger(__name__)
@@ -210,8 +208,8 @@ class StorageService:
         self,
         url: str,
         asset_type: str,
-        video_job_id: UUID,
-        scene_id: UUID | None = None,
+        video_job_id: UUID,  # noqa: ARG002
+        scene_id: UUID | None = None,  # noqa: ARG002
         metadata: dict[str, Any] | None = None,
     ) -> StoredAsset:
         """Store a URL reference without downloading.

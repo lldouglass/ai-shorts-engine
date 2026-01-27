@@ -1,7 +1,8 @@
 """Async utilities for running coroutines in sync contexts."""
 
 import asyncio
-from typing import Any, Coroutine, TypeVar
+from collections.abc import Coroutine
+from typing import Any, TypeVar
 
 T = TypeVar("T")
 
