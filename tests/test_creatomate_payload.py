@@ -1,6 +1,5 @@
 """Unit tests for Creatomate payload building."""
 
-
 from shorts_engine.adapters.renderer.creatomate import (
     CreatomateProvider,
     CreatomateRenderRequest,

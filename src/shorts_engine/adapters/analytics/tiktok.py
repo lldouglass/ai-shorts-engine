@@ -81,10 +81,9 @@ class TikTokAnalyticsAdapter(AnalyticsAdapter):
             open_id = account_state.open_id
 
             # Check if token needs refresh (1 hour before expiry)
-            if (
-                account_state.token_expires_at
-                and account_state.token_expires_at < datetime.now(UTC) + timedelta(hours=1)
-            ):
+            if account_state.token_expires_at and account_state.token_expires_at < datetime.now(
+                UTC
+            ) + timedelta(hours=1):
                 logger.debug("tiktok_token_refresh", account_id=str(self.account_id))
                 try:
                     # Get refresh token from account state

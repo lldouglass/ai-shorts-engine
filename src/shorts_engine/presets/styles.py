@@ -234,6 +234,67 @@ SURREAL_DREAMSCAPE = StylePreset(
     },
 )
 
+ATTACK_ON_TITAN = StylePreset(
+    name="ATTACK_ON_TITAN",
+    display_name="Attack on Titan",
+    description="Epic dark fantasy anime with dramatic compositions, intense emotions, and titan-scale drama",
+    style_tokens=[
+        "attack on titan anime style",
+        "dark fantasy anime",
+        "epic scale",
+        "detailed linework",
+        "dramatic lighting",
+        "desaturated color palette",
+        "military aesthetic",
+        "towering walls",
+        "dramatic sky",
+        "manga-style shading",
+        "intense expressions",
+        "action poses",
+        "detailed backgrounds",
+        "atmospheric fog",
+        "cinematic composition",
+        "high contrast shadows",
+        "survey corps aesthetic",
+    ],
+    negative_tokens=[
+        "chibi",
+        "cute",
+        "kawaii",
+        "bright cheerful colors",
+        "pastel",
+        "cartoon",
+        "pixar",
+        "3D render",
+        "low quality",
+        "blurry",
+        "deformed",
+        "happy cheerful mood",
+        "watercolor",
+    ],
+    continuity_tokens=[
+        "consistent character design",
+        "same military uniform style",
+        "matching dark color grading",
+        "unified intense atmosphere",
+        "consistent line weight",
+        "same art style throughout",
+    ],
+    aspect_ratio=AspectRatio.VERTICAL_9_16,
+    default_duration_per_scene=4.0,  # Faster cuts for intensity
+    color_palette=["#1a1a1a", "#2d2d2d", "#8b0000", "#4a5d23", "#c9a227"],
+    camera_style="dramatic zoom-ins, intense close-ups, epic wide shots, dynamic angles",
+    generation_params={
+        "guidance_scale": 8.0,
+        "num_inference_steps": 50,
+        "motion": {
+            "zoom_end": 1.15,
+            "ease": "ease-out",
+            "transition": "cut",
+        },
+    },
+)
+
 
 # =============================================================================
 # PRESET REGISTRY
@@ -244,6 +305,7 @@ PRESETS: dict[str, StylePreset] = {
     "VIBRANT_MOTION_GRAPHICS": VIBRANT_MOTION_GRAPHICS,
     "CINEMATIC_REALISM": CINEMATIC_REALISM,
     "SURREAL_DREAMSCAPE": SURREAL_DREAMSCAPE,
+    "ATTACK_ON_TITAN": ATTACK_ON_TITAN,
 }
 
 

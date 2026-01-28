@@ -75,16 +75,13 @@ class YouTubeAnalyticsAdapter(AnalyticsAdapter):
             account_state = get_account_state(session, self.account_id)
 
             # Check if token needs refresh (5 min buffer)
-            if (
-                account_state.token_expires_at
-                and account_state.token_expires_at < datetime.now(UTC) + timedelta(minutes=5)
-            ):
+            if account_state.token_expires_at and account_state.token_expires_at < datetime.now(
+                UTC
+            ) + timedelta(minutes=5):
                 logger.debug("youtube_token_refresh", account_id=str(self.account_id))
                 try:
                     token_data = refresh_access_token(account_state.refresh_token)
-                    new_expires = datetime.now(UTC) + timedelta(
-                        seconds=token_data["expires_in"]
-                    )
+                    new_expires = datetime.now(UTC) + timedelta(seconds=token_data["expires_in"])
                     update_account_tokens(
                         session, self.account_id, token_data["access_token"], new_expires
                     )

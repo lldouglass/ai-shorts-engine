@@ -2,6 +2,40 @@
 
 Automated short-form video generation engine. Python 3.11+, FastAPI, Celery, PostgreSQL, Redis.
 
+## Project Vision
+
+**Goal**: Build a fully autonomous short-form video engine that learns from its own performance and continuously optimizes for virality.
+
+The system should:
+1. **Generate** - Create short-form videos automatically from topics/trends
+2. **Publish** - Post to multiple platforms (TikTok, Instagram Reels, YouTube Shorts)
+3. **Measure** - Collect engagement metrics (views, likes, shares, watch time, completion rate)
+4. **Learn** - Analyze what works and feed insights back into generation
+5. **Iterate** - Continuously improve content strategy based on real performance data
+
+### Key Metrics for Virality
+- **Watch-through rate** - % of viewers who finish the video
+- **Engagement rate** - (likes + comments + shares) / views
+- **Share ratio** - shares / views (strongest virality signal)
+- **Hook effectiveness** - drop-off rate in first 3 seconds
+
+### Learning Loop Architecture
+```
+┌─────────────┐     ┌─────────────┐     ┌─────────────┐
+│   Generate  │────▶│   Publish   │────▶│   Measure   │
+└─────────────┘     └─────────────┘     └─────────────┘
+       ▲                                       │
+       │            ┌─────────────┐            │
+       └────────────│    Learn    │◀───────────┘
+                    └─────────────┘
+```
+
+The learning loop should:
+- Track performance by style preset, topic, hook type, length, posting time
+- Build a feedback dataset linking content features → engagement outcomes
+- Use this data to inform LLM prompts and generation parameters
+- A/B test variations to validate hypotheses
+
 ## Commands
 ```bash
 make up          # Start services (Docker)
@@ -96,6 +130,13 @@ Convert at service boundaries. Don't leak DB models into domain logic.
 - Defined in `presets/styles.py`
 - Add to `PRESETS` dict after defining
 - Use `get_preset()` to retrieve, never access dict directly
+
+### Learning Loop
+- ALWAYS store content features (style, topic, hook type, length) with each published video
+- Metrics collection is async - don't block on API calls to platforms
+- Use statistical significance before acting on A/B test results (min sample size)
+- Feed learnings into prompts via the `optimization_context` parameter
+- Never delete historical performance data - it's the training signal
 
 ## Environment Variables
 

@@ -1,12 +1,13 @@
 """Creatomate video rendering provider with dynamic composition."""
 
 import asyncio
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
 import httpx
 
+from shorts_engine.adapters.image_gen.base import MotionParams
 from shorts_engine.adapters.renderer.base import RendererProvider, RenderRequest, RenderResult
 from shorts_engine.config import settings
 from shorts_engine.logging import get_logger
@@ -25,10 +26,46 @@ class SceneClip:
 
 
 @dataclass
+class ImageSceneClip:
+    """An image-based scene clip with Ken Burns motion.
+
+    Used for "limited animation" style where static images
+    are animated with zoom/pan effects.
+    """
+
+    image_url: str
+    duration_seconds: float
+    motion: MotionParams = field(default_factory=MotionParams)
+    caption_text: str | None = None
+    scene_number: int = 0
+    transition: str = "cut"  # cut, crossfade, fade_to_black
+    transition_duration: float = 0.3
+
+
+@dataclass
 class CreatomateRenderRequest:
     """Extended render request for Creatomate with scene data."""
 
     scenes: list[SceneClip]
+    voiceover_url: str | None = None
+    output_format: str = "mp4"
+    width: int = 1080
+    height: int = 1920
+    fps: int = 30
+    background_music_url: str | None = None
+    background_music_volume: float = 0.3
+    caption_style: dict[str, Any] | None = None
+
+
+@dataclass
+class ImageCompositionRequest:
+    """Render request for image-based compositions with Ken Burns effects.
+
+    Used for "limited animation" style videos where static images
+    are animated with motion effects.
+    """
+
+    images: list[ImageSceneClip]
     voiceover_url: str | None = None
     output_format: str = "mp4"
     width: int = 1080
@@ -159,6 +196,219 @@ class CreatomateProvider(RendererProvider):
         except Exception as e:
             logger.error("creatomate_render_error", error=str(e))
             return RenderResult(success=False, error_message=str(e))
+
+    async def render_image_composition(
+        self,
+        request: ImageCompositionRequest,
+    ) -> RenderResult:
+        """Render an image-based composition with Ken Burns effects.
+
+        This renders static images with zoom/pan animations to create
+        the "limited animation" style used in anime.
+
+        Args:
+            request: Image composition request with images and motion params
+
+        Returns:
+            RenderResult with output URL or error information
+        """
+        if not self.api_key:
+            return RenderResult(
+                success=False,
+                error_message="Creatomate API key not configured",
+            )
+
+        # Build the image composition payload
+        payload = self._build_image_composition_payload(request)
+
+        headers = {
+            "Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json",
+        }
+
+        logger.info(
+            "creatomate_image_render_started",
+            image_count=len(request.images),
+            has_voiceover=request.voiceover_url is not None,
+            output_size=f"{request.width}x{request.height}",
+        )
+
+        try:
+            async with httpx.AsyncClient(timeout=60.0) as client:
+                response = await client.post(
+                    f"{self.base_url}/renders",
+                    headers=headers,
+                    json=payload,
+                )
+                response.raise_for_status()
+                data = response.json()
+
+            # Handle response
+            renders = data if isinstance(data, list) else [data]
+            render_info = renders[0]
+            render_id = render_info.get("id")
+
+            if not render_id:
+                return RenderResult(
+                    success=False,
+                    error_message="No render ID returned from Creatomate",
+                )
+
+            logger.info("creatomate_image_render_submitted", render_id=render_id)
+
+            # Poll for completion or use webhook
+            if self.webhook_url:
+                return RenderResult(
+                    success=True,
+                    metadata={
+                        "render_id": render_id,
+                        "status": "processing",
+                        "webhook_pending": True,
+                        "composition_type": "image_sequence",
+                    },
+                )
+
+            # Poll for completion
+            result = await self._poll_for_completion(render_id, headers)
+            return result
+
+        except httpx.HTTPStatusError as e:
+            error_msg = f"Creatomate API error: {e.response.status_code}"
+            try:
+                error_data = e.response.json()
+                error_msg = f"{error_msg} - {error_data}"
+            except Exception:
+                pass
+            logger.error("creatomate_image_api_error", error=error_msg)
+            return RenderResult(success=False, error_message=error_msg)
+        except Exception as e:
+            logger.error("creatomate_image_render_error", error=str(e))
+            return RenderResult(success=False, error_message=str(e))
+
+    def _build_image_composition_payload(
+        self,
+        request: ImageCompositionRequest,
+    ) -> dict[str, Any]:
+        """Build the image composition payload with Ken Burns effects.
+
+        Creates a composition with:
+        - Sequenced images with zoom/pan animations
+        - Transitions between images
+        - Burned-in captions
+        - Optional voiceover and background music
+        """
+        total_duration = sum(img.duration_seconds for img in request.images)
+        elements: list[dict[str, Any]] = []
+        current_time = 0.0
+
+        for img in request.images:
+            motion = img.motion
+
+            # Calculate animation keyframes for Ken Burns effect
+            # Creatomate uses keyframes for animations
+            image_element: dict[str, Any] = {
+                "type": "image",
+                "source": img.image_url,
+                "time": current_time,
+                "duration": img.duration_seconds,
+                "fit": "cover",
+                # Ken Burns animation via keyframes
+                "animations": [
+                    {
+                        "easing": motion.ease,
+                        "type": "scale",
+                        "scope": "element",
+                        "start_scale": f"{motion.zoom_start * 100}%",
+                        "end_scale": f"{motion.zoom_end * 100}%",
+                    },
+                ],
+            }
+
+            # Add pan animation if specified
+            if motion.pan_x_start != motion.pan_x_end or motion.pan_y_start != motion.pan_y_end:
+                # Convert pan to x/y offset percentages
+                x_offset_start = f"{50 + motion.pan_x_start * 100}%"
+                x_offset_end = f"{50 + motion.pan_x_end * 100}%"
+                y_offset_start = f"{50 + motion.pan_y_start * 100}%"
+                y_offset_end = f"{50 + motion.pan_y_end * 100}%"
+
+                image_element["x_anchor"] = x_offset_start
+                image_element["y_anchor"] = y_offset_start
+                image_element["animations"].append(
+                    {
+                        "easing": motion.ease,
+                        "type": "pan",
+                        "x_anchor": [x_offset_start, x_offset_end],
+                        "y_anchor": [y_offset_start, y_offset_end],
+                    }
+                )
+
+            # Add transition effect
+            if img.transition == "crossfade" and current_time > 0:
+                image_element["enter"] = {
+                    "type": "fade",
+                    "duration": img.transition_duration,
+                }
+            elif img.transition == "fade_to_black":
+                image_element["exit"] = {
+                    "type": "fade",
+                    "duration": img.transition_duration,
+                    "background_color": "#000000",
+                }
+
+            elements.append(image_element)
+
+            # Caption element
+            if img.caption_text:
+                caption_style = request.caption_style or self._default_caption_style()
+                caption_element: dict[str, Any] = {
+                    "type": "text",
+                    "text": img.caption_text,
+                    "time": current_time,
+                    "duration": img.duration_seconds,
+                    **caption_style,
+                }
+                elements.append(caption_element)
+
+            current_time += img.duration_seconds
+
+        # Audio tracks
+        if request.voiceover_url:
+            elements.append(
+                {
+                    "type": "audio",
+                    "source": request.voiceover_url,
+                    "time": 0,
+                    "duration": total_duration,
+                    "volume": "100%",
+                }
+            )
+
+        if request.background_music_url:
+            elements.append(
+                {
+                    "type": "audio",
+                    "source": request.background_music_url,
+                    "time": 0,
+                    "duration": total_duration,
+                    "volume": f"{int(request.background_music_volume * 100)}%",
+                    "audio_fade_out": 2.0,
+                }
+            )
+
+        payload: dict[str, Any] = {
+            "output_format": request.output_format,
+            "width": request.width,
+            "height": request.height,
+            "frame_rate": request.fps,
+            "duration": total_duration,
+            "elements": elements,
+        }
+
+        if self.webhook_url:
+            payload["webhook_url"] = self.webhook_url
+
+        return payload
 
     def _build_composition_payload(
         self,

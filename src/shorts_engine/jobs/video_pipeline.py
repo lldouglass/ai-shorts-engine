@@ -21,6 +21,9 @@ from uuid import UUID, uuid4
 from celery import chain, group
 from sqlalchemy import select
 
+from shorts_engine.adapters.image_gen.base import ImageGenProvider, ImageGenRequest
+from shorts_engine.adapters.image_gen.openai_dalle import OpenAIDalleProvider
+from shorts_engine.adapters.image_gen.stub import StubImageGenProvider
 from shorts_engine.adapters.video_gen.base import VideoGenProvider, VideoGenRequest
 from shorts_engine.adapters.video_gen.luma import LumaProvider
 from shorts_engine.adapters.video_gen.stub import StubVideoGenProvider
@@ -62,6 +65,22 @@ def get_video_gen_provider() -> VideoGenProvider:
         return LumaProvider()
     else:
         return StubVideoGenProvider()
+
+
+def get_image_gen_provider() -> ImageGenProvider:
+    """Get the configured image generation provider."""
+    provider = getattr(settings, "image_gen_provider", "stub").lower()
+
+    if provider == "dalle3":
+        return OpenAIDalleProvider()
+    else:
+        return StubImageGenProvider()
+
+
+def is_image_mode() -> bool:
+    """Check if we're using image-based generation mode."""
+    mode = getattr(settings, "visual_gen_mode", "video").lower()
+    return mode == "image"
 
 
 # =============================================================================
@@ -113,15 +132,15 @@ def plan_job_task(
         if job.stage in ("planned", "generating", "verifying", "ready") and (
             job.qa_status == QAStatus.PASSED or not settings.qa_enabled
         ):
-                logger.info("plan_job_already_done", video_job_id=video_job_id, stage=job.stage)
-                scene_ids = [str(s.id) for s in job.scenes]
-                return {
-                    "success": True,
-                    "video_job_id": video_job_id,
-                    "stage": job.stage,
-                    "scene_ids": scene_ids,
-                    "skipped": True,
-                }
+            logger.info("plan_job_already_done", video_job_id=video_job_id, stage=job.stage)
+            scene_ids = [str(s.id) for s in job.scenes]
+            return {
+                "success": True,
+                "video_job_id": video_job_id,
+                "stage": job.stage,
+                "scene_ids": scene_ids,
+                "skipped": True,
+            }
 
         # Check if QA has permanently failed
         if job.qa_status == QAStatus.FAILED_QA:
@@ -448,7 +467,9 @@ def generate_scene_clip_task(
                         scene_id=scene_uuid,
                         metadata={
                             "provider": provider.name,
-                            "generation_id": result.metadata.get("generation_id") if result.metadata else None,
+                            "generation_id": (
+                                result.metadata.get("generation_id") if result.metadata else None
+                            ),
                         },
                     )
                 )
@@ -523,6 +544,207 @@ def generate_scene_clip_task(
 
 @celery_app.task(
     bind=True,
+    name="pipeline.generate_scene_image",
+    max_retries=5,
+    default_retry_delay=30,
+    autoretry_for=(Exception,),
+    retry_backoff=True,
+    retry_backoff_max=300,
+)
+def generate_scene_image_task(
+    self: Any,
+    scene_id: str,
+    video_job_id: str,
+) -> dict[str, Any]:
+    """Generate an AI image for a single scene (image mode).
+
+    Uses DALL-E or other image generation provider to create
+    static images that will be animated with Ken Burns effects.
+
+    Args:
+        scene_id: UUID of the scene to generate
+        video_job_id: UUID of the parent video job
+
+    Returns:
+        Dict with asset information
+    """
+    task_id = self.request.id
+    scene_uuid = UUID(scene_id)
+    job_uuid = UUID(video_job_id)
+
+    logger.info(
+        "generate_scene_image_started",
+        task_id=task_id,
+        scene_id=scene_id,
+        video_job_id=video_job_id,
+    )
+
+    with get_session_context() as session:
+        # Load scene
+        scene = session.get(SceneModel, scene_uuid)
+        if not scene:
+            raise ValueError(f"Scene not found: {scene_id}")
+
+        # Load job for style info
+        job = session.get(VideoJobModel, job_uuid)
+        if not job:
+            raise ValueError(f"Video job not found: {video_job_id}")
+
+        # Idempotency check - skip if already generated
+        existing_asset = session.execute(
+            select(AssetModel).where(
+                AssetModel.scene_id == scene_uuid,
+                AssetModel.asset_type == "scene_image",
+                AssetModel.status == "ready",
+            )
+        ).scalar_one_or_none()
+
+        if existing_asset:
+            logger.info("generate_scene_image_already_done", scene_id=scene_id)
+            return {
+                "success": True,
+                "scene_id": scene_id,
+                "asset_id": str(existing_asset.id),
+                "asset_type": "scene_image",
+                "skipped": True,
+            }
+
+        # Update scene status
+        scene.status = "generating"
+        scene.generation_attempts = (scene.generation_attempts or 0) + 1
+        session.commit()
+
+        try:
+            # Get style preset for prompt enhancement
+            preset = get_preset(job.style_preset)
+            style_suffix = preset.format_style_prompt() if preset else ""
+
+            # Build full prompt for image generation
+            full_prompt = scene.visual_prompt
+            if style_suffix:
+                full_prompt = f"{full_prompt}, {style_suffix}"
+            if scene.continuity_notes:
+                full_prompt = f"{full_prompt}. {scene.continuity_notes}"
+
+            # Generate image
+            provider = get_image_gen_provider()
+            request = ImageGenRequest(
+                prompt=full_prompt,
+                style=job.style_preset,
+                aspect_ratio="9:16",  # Vertical for shorts
+                quality=getattr(settings, "image_gen_quality", "hd"),
+            )
+
+            result = run_async(provider.generate(request))
+
+            if not result.success:
+                scene.status = "failed"
+                scene.last_error = result.error_message
+                session.commit()
+                raise RuntimeError(f"Image generation failed: {result.error_message}")
+
+            # Store asset
+            storage = StorageService()
+
+            if result.image_url:
+                # Download and store from URL
+                stored = run_async(
+                    storage.store_from_url(
+                        url=result.image_url,
+                        asset_type="scene_image",
+                        video_job_id=job_uuid,
+                        scene_id=scene_uuid,
+                        metadata={
+                            "provider": provider.name,
+                            "style": job.style_preset,
+                            "motion_params": (
+                                {
+                                    "zoom_start": result.suggested_motion.zoom_start,
+                                    "zoom_end": result.suggested_motion.zoom_end,
+                                    "pan_x_start": result.suggested_motion.pan_x_start,
+                                    "pan_x_end": result.suggested_motion.pan_x_end,
+                                    "pan_y_start": result.suggested_motion.pan_y_start,
+                                    "pan_y_end": result.suggested_motion.pan_y_end,
+                                    "ease": result.suggested_motion.ease,
+                                    "transition": result.suggested_motion.transition,
+                                }
+                                if result.suggested_motion
+                                else None
+                            ),
+                        },
+                    )
+                )
+            elif result.image_data:
+                # Store raw bytes
+                stored = run_async(
+                    storage.store_bytes(
+                        data=result.image_data,
+                        asset_type="scene_image",
+                        video_job_id=job_uuid,
+                        scene_id=scene_uuid,
+                        metadata={"provider": provider.name},
+                    )
+                )
+            else:
+                # Stub provider - URL reference only
+                stored = storage.store_url_reference(
+                    url="stub://generated_image",
+                    asset_type="scene_image",
+                    video_job_id=job_uuid,
+                    scene_id=scene_uuid,
+                    metadata=result.metadata or {},
+                )
+
+            # Create asset record
+            asset = AssetModel(
+                id=stored.id,
+                video_job_id=job_uuid,
+                scene_id=scene_uuid,
+                asset_type="scene_image",
+                storage_type=stored.storage_type,
+                file_path=str(stored.file_path) if stored.file_path else None,
+                url=stored.url,
+                provider=provider.name,
+                file_size_bytes=stored.file_size_bytes,
+                duration_seconds=scene.duration_seconds,  # Will be used during composition
+                mime_type="image/png",
+                width=1080,
+                height=1920,
+                status="ready",
+                metadata_=stored.metadata,
+            )
+            session.add(asset)
+
+            # Update scene
+            scene.status = "generated"
+            session.commit()
+
+            logger.info(
+                "generate_scene_image_completed",
+                scene_id=scene_id,
+                asset_id=str(asset.id),
+                provider=provider.name,
+            )
+
+            return {
+                "success": True,
+                "scene_id": scene_id,
+                "asset_id": str(asset.id),
+                "asset_type": "scene_image",
+                "storage_type": stored.storage_type,
+                "file_path": str(stored.file_path) if stored.file_path else None,
+                "url": stored.url,
+            }
+
+        except Exception as e:
+            scene.status = "failed"
+            scene.last_error = str(e)
+            session.commit()
+            raise
+
+
+@celery_app.task(
+    bind=True,
     name="pipeline.generate_all_scenes",
 )
 def generate_all_scenes_task(
@@ -530,15 +752,19 @@ def generate_all_scenes_task(
     video_job_id: str,
     scene_ids: list[str],
 ) -> dict[str, Any]:
-    """Orchestrate generation of all scene clips.
+    """Orchestrate generation of all scene clips or images.
 
     This task dispatches individual scene generation tasks
-    and waits for all to complete.
+    and waits for all to complete. Uses either video or image
+    generation based on the visual_gen_mode setting.
     """
+    use_images = is_image_mode()
+
     logger.info(
         "generate_all_scenes_started",
         video_job_id=video_job_id,
         scene_count=len(scene_ids),
+        mode="image" if use_images else "video",
     )
 
     with get_session_context() as session:
@@ -547,10 +773,15 @@ def generate_all_scenes_task(
             job.stage = "generating"
             session.commit()
 
-    # Create a group of scene generation tasks
-    generation_tasks = group(
-        generate_scene_clip_task.s(scene_id, video_job_id) for scene_id in scene_ids
-    )
+    # Create a group of scene generation tasks based on mode
+    if use_images:
+        generation_tasks = group(
+            generate_scene_image_task.s(scene_id, video_job_id) for scene_id in scene_ids
+        )
+    else:
+        generation_tasks = group(
+            generate_scene_clip_task.s(scene_id, video_job_id) for scene_id in scene_ids
+        )
 
     # Execute and wait for all
     result = generation_tasks.apply_async()
