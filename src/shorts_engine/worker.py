@@ -63,6 +63,12 @@ celery_app.conf.update(
         "plan_next_batch": {"queue": "learning"},
         "update_recipe_stats": {"queue": "learning"},
         "evaluate_experiments": {"queue": "learning"},
+        # Autonomous pipeline tasks
+        "autonomous.generate_topics": {"queue": "learning"},
+        "autonomous.run_pipeline_for_job": {"queue": "high"},
+        "autonomous.run_batch_pipelines": {"queue": "learning"},
+        "autonomous.run_nightly_batch": {"queue": "learning"},
+        "autonomous.run_all_projects_nightly": {"queue": "learning"},
     },
     # Beat scheduler (for periodic tasks)
     beat_schedule={
@@ -92,6 +98,14 @@ celery_app.conf.update(
             "task": "evaluate_experiments",
             "schedule": 86400.0,  # 24 hours
             "args": (),  # Will need project_id passed via scheduled task
+            "options": {"queue": "learning"},
+        },
+        # Autonomous batch - run nightly for all active projects
+        # Runs at ~4 AM UTC (after stats update and experiment eval)
+        "autonomous-nightly-batch": {
+            "task": "autonomous.run_all_projects_nightly",
+            "schedule": 86400.0,  # 24 hours
+            "args": (),
             "options": {"queue": "learning"},
         },
     },

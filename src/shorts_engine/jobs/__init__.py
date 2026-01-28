@@ -27,6 +27,18 @@ from shorts_engine.jobs.video_pipeline import (
     run_full_pipeline_task,
     verify_assets_task,
 )
+from shorts_engine.jobs.autonomous_pipeline import (
+    generate_topics_task,
+    run_all_projects_nightly_task,
+    run_batch_pipelines_task,
+    run_nightly_batch_task,
+    run_pipeline_for_job_task,
+)
+from shorts_engine.jobs.learning_jobs import (
+    evaluate_experiments_task,
+    plan_next_batch_task,
+    update_recipe_stats_task,
+)
 
 __all__ = [
     # Core tasks
@@ -52,4 +64,14 @@ __all__ = [
     "publish_to_youtube_task",
     "run_publish_pipeline_task",
     "check_publish_status_task",
+    # Autonomous pipeline tasks
+    "generate_topics_task",
+    "run_pipeline_for_job_task",
+    "run_batch_pipelines_task",
+    "run_nightly_batch_task",
+    "run_all_projects_nightly_task",
+    # Learning loop tasks
+    "plan_next_batch_task",
+    "update_recipe_stats_task",
+    "evaluate_experiments_task",
 ]

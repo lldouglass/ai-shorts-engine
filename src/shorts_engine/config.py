@@ -78,6 +78,30 @@ class Settings(BaseSettings):
         description="LLM provider for planning (openai, anthropic, stub)",
     )
 
+    # Topic Provider
+    topic_provider: str = Field(
+        default="stub",
+        description="Topic generation provider (llm, stub)",
+    )
+
+    # Autonomous Pipeline
+    auto_chain_render: bool = Field(
+        default=False,
+        description="Automatically chain render after video generation completes",
+    )
+    auto_chain_publish: bool = Field(
+        default=False,
+        description="Automatically chain publish after render completes",
+    )
+    autonomous_batch_size: int = Field(
+        default=5,
+        description="Number of videos to generate per autonomous batch",
+    )
+    autonomous_enabled: bool = Field(
+        default=False,
+        description="Enable fully autonomous video generation loop",
+    )
+
     # API Keys (optional, for real providers)
     openai_api_key: str | None = Field(default=None, description="OpenAI API key")
     anthropic_api_key: str | None = Field(default=None, description="Anthropic API key")
