@@ -627,9 +627,7 @@ def shorts_render(
 @projects_app.command("create")
 def projects_create(
     name: str = typer.Option(..., "--name", "-n", help="Project name"),
-    description: str | None = typer.Option(
-        None, "--description", "-d", help="Project description"
-    ),
+    description: str | None = typer.Option(None, "--description", "-d", help="Project description"),
     preset: str = typer.Option(
         "DARK_DYSTOPIAN_ANIME",
         "--preset",

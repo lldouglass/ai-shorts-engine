@@ -394,9 +394,7 @@ def increment_upload_count(
         account.uploads_today = 0
         # Reset at midnight UTC
         tomorrow = now.date() + timedelta(days=1)
-        account.uploads_reset_at = datetime(
-            tomorrow.year, tomorrow.month, tomorrow.day, tzinfo=UTC
-        )
+        account.uploads_reset_at = datetime(tomorrow.year, tomorrow.month, tomorrow.day, tzinfo=UTC)
 
     account.uploads_today = (account.uploads_today or 0) + 1
     session.commit()
@@ -640,7 +638,8 @@ def get_instagram_account_state(
 
     if not account.external_id:
         raise AccountError(
-            f"Account '{account.label}' has no Instagram account ID. " "Please reconnect the account."
+            f"Account '{account.label}' has no Instagram account ID. "
+            "Please reconnect the account."
         )
 
     return InstagramAccountState(

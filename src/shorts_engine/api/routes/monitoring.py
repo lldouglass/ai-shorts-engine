@@ -1,6 +1,5 @@
 """Monitoring and dashboard endpoints for operational visibility."""
 
-
 from fastapi import APIRouter, Depends, Query, status
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session

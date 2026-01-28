@@ -1,6 +1,5 @@
 """Health check endpoints."""
 
-
 from fastapi import APIRouter, status
 from pydantic import BaseModel
 

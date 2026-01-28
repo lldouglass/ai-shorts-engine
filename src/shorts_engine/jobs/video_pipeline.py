@@ -113,15 +113,15 @@ def plan_job_task(
         if job.stage in ("planned", "generating", "verifying", "ready") and (
             job.qa_status == QAStatus.PASSED or not settings.qa_enabled
         ):
-                logger.info("plan_job_already_done", video_job_id=video_job_id, stage=job.stage)
-                scene_ids = [str(s.id) for s in job.scenes]
-                return {
-                    "success": True,
-                    "video_job_id": video_job_id,
-                    "stage": job.stage,
-                    "scene_ids": scene_ids,
-                    "skipped": True,
-                }
+            logger.info("plan_job_already_done", video_job_id=video_job_id, stage=job.stage)
+            scene_ids = [str(s.id) for s in job.scenes]
+            return {
+                "success": True,
+                "video_job_id": video_job_id,
+                "stage": job.stage,
+                "scene_ids": scene_ids,
+                "skipped": True,
+            }
 
         # Check if QA has permanently failed
         if job.qa_status == QAStatus.FAILED_QA:
@@ -448,7 +448,9 @@ def generate_scene_clip_task(
                         scene_id=scene_uuid,
                         metadata={
                             "provider": provider.name,
-                            "generation_id": result.metadata.get("generation_id") if result.metadata else None,
+                            "generation_id": (
+                                result.metadata.get("generation_id") if result.metadata else None
+                            ),
                         },
                     )
                 )

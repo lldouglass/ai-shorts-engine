@@ -75,10 +75,9 @@ class InstagramAnalyticsAdapter(AnalyticsAdapter):
             account_state = get_account_state(session, self.account_id)
 
             # Check if token needs refresh (7 days before expiry)
-            if (
-                account_state.token_expires_at
-                and account_state.token_expires_at < datetime.now(UTC) + timedelta(days=7)
-            ):
+            if account_state.token_expires_at and account_state.token_expires_at < datetime.now(
+                UTC
+            ) + timedelta(days=7):
                 logger.debug("instagram_token_refresh", account_id=str(self.account_id))
                 try:
                     token_data = refresh_instagram_token(account_state.access_token)
