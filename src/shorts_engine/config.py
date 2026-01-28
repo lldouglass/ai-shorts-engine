@@ -102,6 +102,20 @@ class Settings(BaseSettings):
         description="Enable fully autonomous video generation loop",
     )
 
+    # Visual Generation Mode
+    visual_gen_mode: str = Field(
+        default="video",
+        description="Visual generation mode: 'video' for AI video clips, 'image' for AI images with motion",
+    )
+    image_gen_provider: str = Field(
+        default="stub",
+        description="Image generation provider (stub, dalle3)",
+    )
+    image_gen_quality: str = Field(
+        default="hd",
+        description="Image quality for DALL-E (standard, hd)",
+    )
+
     # API Keys (optional, for real providers)
     openai_api_key: str | None = Field(default=None, description="OpenAI API key")
     anthropic_api_key: str | None = Field(default=None, description="Anthropic API key")

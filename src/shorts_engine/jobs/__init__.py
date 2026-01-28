@@ -1,5 +1,17 @@
 """Celery job definitions."""
 
+from shorts_engine.jobs.autonomous_pipeline import (
+    generate_topics_task,
+    run_all_projects_nightly_task,
+    run_batch_pipelines_task,
+    run_nightly_batch_task,
+    run_pipeline_for_job_task,
+)
+from shorts_engine.jobs.learning_jobs import (
+    evaluate_experiments_task,
+    plan_next_batch_task,
+    update_recipe_stats_task,
+)
 from shorts_engine.jobs.publish_pipeline import (
     check_publish_status_task,
     publish_to_youtube_task,
@@ -26,18 +38,6 @@ from shorts_engine.jobs.video_pipeline import (
     plan_job_task,
     run_full_pipeline_task,
     verify_assets_task,
-)
-from shorts_engine.jobs.autonomous_pipeline import (
-    generate_topics_task,
-    run_all_projects_nightly_task,
-    run_batch_pipelines_task,
-    run_nightly_batch_task,
-    run_pipeline_for_job_task,
-)
-from shorts_engine.jobs.learning_jobs import (
-    evaluate_experiments_task,
-    plan_next_batch_task,
-    update_recipe_stats_task,
 )
 
 __all__ = [

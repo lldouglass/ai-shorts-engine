@@ -5,7 +5,6 @@ generation loop: topic generation → batch planning → video generation →
 rendering → publishing.
 """
 
-from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID
 
@@ -14,7 +13,6 @@ from celery import chain, group
 from shorts_engine.config import get_settings
 from shorts_engine.db.models import PlannedBatchModel, ProjectModel, VideoJobModel
 from shorts_engine.db.session import get_session_context
-from shorts_engine.domain.enums import BatchStatus
 from shorts_engine.jobs.learning_jobs import plan_next_batch_task
 from shorts_engine.jobs.publish_pipeline import run_publish_pipeline_task
 from shorts_engine.jobs.render_pipeline import run_render_pipeline_task
@@ -263,7 +261,7 @@ def run_pipeline_for_job_task(
     name="autonomous.chain_publish_after_render",
 )
 def _chain_publish_after_render(
-    self: Any,
+    _self: Any,
     render_result: dict[str, Any],
 ) -> dict[str, Any]:
     """Chain publish task after render completes.
