@@ -104,6 +104,80 @@ class RecipeSampler:
             )
         return self._top_recipes_cache
 
+    def _get_experiment_winner_boosts(self) -> dict[str, str]:
+        """Get winning values from completed experiments.
+
+        Returns a dict mapping variable names to their winning values,
+        which should be preferred during sampling.
+
+        Returns:
+            Dict of {variable: winning_value} from completed experiments
+        """
+        # Query completed experiments with winners
+        experiments = (
+            self.session.execute(
+                select(ExperimentModel).where(
+                    ExperimentModel.project_id == self.project_id,
+                    ExperimentModel.status == ExperimentStatus.COMPLETED,
+                    ExperimentModel.winner.isnot(None),
+                )
+            )
+            .scalars()
+            .all()
+        )
+
+        boosts: dict[str, str] = {}
+        for exp in experiments:
+            if exp.winner == "variant":
+                boosts[exp.variable_tested] = exp.variant_value
+            elif exp.winner == "baseline":
+                boosts[exp.variable_tested] = exp.baseline_value
+
+        if boosts:
+            logger.debug(
+                "experiment_winner_boosts_loaded",
+                project_id=str(self.project_id),
+                boosts=boosts,
+            )
+
+        return boosts
+
+    def _apply_winner_boost(
+        self,
+        recipes: list[Recipe],
+        base_weights: list[float],
+        boost_factor: float = 1.5,
+    ) -> list[float]:
+        """Apply winner boosts to recipe weights.
+
+        Recipes that match winning experiment values get a weight multiplier.
+
+        Args:
+            recipes: List of recipes to weight
+            base_weights: Base weights for each recipe
+            boost_factor: Multiplier for recipes matching winners
+
+        Returns:
+            Adjusted weights list
+        """
+        boosts = self._get_experiment_winner_boosts()
+        if not boosts:
+            return base_weights
+
+        adjusted_weights = []
+        for recipe, weight in zip(recipes, base_weights, strict=False):
+            multiplier = 1.0
+
+            # Check each variable for a match
+            for variable, winning_value in boosts.items():
+                recipe_value = str(getattr(recipe, variable, None))
+                if recipe_value == winning_value:
+                    multiplier *= boost_factor
+
+            adjusted_weights.append(weight * multiplier)
+
+        return adjusted_weights
+
     def _compute_topic_hash(self, topic: str, recipe: Recipe) -> str:
         """Compute a hash for topic+recipe combination.
 
@@ -182,11 +256,14 @@ class RecipeSampler:
             return None
 
         # Weighted sampling based on reward score
-        weights = []
+        base_weights = []
         for r in top_recipes:
             # Use reward score as weight, with minimum of 0.1
             weight = max(r.avg_reward_score or 0.5, 0.1)
-            weights.append(weight)
+            base_weights.append(weight)
+
+        # Apply experiment winner boosts
+        weights = self._apply_winner_boost(top_recipes, base_weights)
 
         recipe = random.choices(top_recipes, weights=weights, k=1)[0]
         topic_hash = self._compute_topic_hash(topic, recipe)

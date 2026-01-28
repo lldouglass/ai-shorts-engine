@@ -16,6 +16,8 @@ from shorts_engine.db.models import PlannedBatchModel, ProjectModel, VideoJobMod
 from shorts_engine.db.session import get_session_context
 from shorts_engine.domain.enums import BatchStatus
 from shorts_engine.jobs.learning_jobs import plan_next_batch_task
+from shorts_engine.jobs.publish_pipeline import run_publish_pipeline_task
+from shorts_engine.jobs.render_pipeline import run_render_pipeline_task
 from shorts_engine.jobs.video_pipeline import (
     generate_all_scenes_from_plan,
     mark_ready_for_render_task,
@@ -23,6 +25,7 @@ from shorts_engine.jobs.video_pipeline import (
     verify_assets_task,
 )
 from shorts_engine.logging import get_logger
+from shorts_engine.services.learning.context import OptimizationContextBuilder
 from shorts_engine.services.topic_generator import TopicGenerator
 from shorts_engine.worker import celery_app
 
@@ -148,6 +151,8 @@ def generate_topics_task(
 def run_pipeline_for_job_task(
     self: Any,
     video_job_id: str,
+    auto_render: bool | None = None,
+    auto_publish: bool | None = None,
 ) -> dict[str, Any]:
     """Run the video generation pipeline for an existing job.
 
@@ -156,15 +161,27 @@ def run_pipeline_for_job_task(
 
     Args:
         video_job_id: UUID of the existing video job
+        auto_render: Override config for auto-chaining render (default: from config)
+        auto_publish: Override config for auto-chaining publish (default: from config)
 
     Returns:
         Dict with pipeline result
     """
     task_id = self.request.id
+    settings = get_settings()
+
+    # Use config defaults if not overridden
+    if auto_render is None:
+        auto_render = settings.auto_chain_render
+    if auto_publish is None:
+        auto_publish = settings.auto_chain_publish
+
     logger.info(
         "run_pipeline_for_job_started",
         task_id=task_id,
         video_job_id=video_job_id,
+        auto_render=auto_render,
+        auto_publish=auto_publish,
     )
 
     try:
@@ -192,28 +209,101 @@ def run_pipeline_for_job_task(
                 "stage": job.stage,
             }
 
-    # Build pipeline chain
-    pipeline = chain(
+    # Build pipeline chain - start with video generation
+    pipeline_tasks = [
         plan_job_task.s(video_job_id),
         generate_all_scenes_from_plan.s(video_job_id),
         verify_assets_task.s(),
         mark_ready_for_render_task.s(),
-    )
+    ]
 
-    # Start pipeline
+    pipeline = chain(*pipeline_tasks)
+
+    # Start the video generation pipeline
     result = pipeline.apply_async()
+
+    # If auto_render is enabled, chain render after generation completes
+    if auto_render:
+        # Schedule render to run after video generation
+        render_task = chain(
+            run_render_pipeline_task.s(video_job_id),
+        )
+
+        # If auto_publish is also enabled, chain publish after render
+        if auto_publish and settings.autopublish_enabled:
+            render_task = chain(
+                run_render_pipeline_task.s(video_job_id),
+                # Publish task needs to extract job_id from render result
+                _chain_publish_after_render.s(),
+            )
+
+        # Link render to run after generation completes
+        result.link(render_task)
 
     logger.info(
         "run_pipeline_for_job_dispatched",
         task_id=task_id,
         video_job_id=video_job_id,
         pipeline_task_id=result.id,
+        auto_render=auto_render,
+        auto_publish=auto_publish,
     )
 
     return {
         "success": True,
         "video_job_id": video_job_id,
         "pipeline_task_id": result.id,
+        "auto_render_enabled": auto_render,
+        "auto_publish_enabled": auto_publish and settings.autopublish_enabled,
+    }
+
+
+@celery_app.task(
+    bind=True,
+    name="autonomous.chain_publish_after_render",
+)
+def _chain_publish_after_render(
+    self: Any,
+    render_result: dict[str, Any],
+) -> dict[str, Any]:
+    """Chain publish task after render completes.
+
+    This is a bridge task that extracts the job ID from render result
+    and triggers the publish pipeline.
+    """
+    if not render_result.get("success"):
+        logger.warning(
+            "chain_publish_skipped",
+            reason="render_failed",
+            error=render_result.get("error"),
+        )
+        return {"success": False, "error": "Render failed, skipping publish"}
+
+    video_job_id = render_result.get("video_job_id")
+    if not video_job_id:
+        return {"success": False, "error": "No video_job_id in render result"}
+
+    settings = get_settings()
+    if not settings.autopublish_enabled:
+        logger.info(
+            "chain_publish_skipped",
+            reason="autopublish_disabled",
+            video_job_id=video_job_id,
+        )
+        return {
+            "success": True,
+            "video_job_id": video_job_id,
+            "skipped": True,
+            "reason": "autopublish_disabled",
+        }
+
+    # Trigger publish pipeline
+    result = run_publish_pipeline_task.delay(video_job_id)
+
+    return {
+        "success": True,
+        "video_job_id": video_job_id,
+        "publish_task_id": result.id,
     }
 
 
@@ -411,10 +501,34 @@ def run_nightly_batch_task(
         jobs_created=len(job_ids),
     )
 
-    # Step 3: Dispatch video generation pipelines
+    # Step 3: Build optimization context for this project
+    optimization_context_built = False
+    with get_session_context() as session:
+        try:
+            context_builder = OptimizationContextBuilder(session)
+            opt_context = context_builder.build(project_uuid)
+            optimization_context_built = opt_context.sample_size >= 5
+            logger.info(
+                "optimization_context_built",
+                project_id=project_id,
+                sample_size=opt_context.sample_size,
+                winning_patterns=len(opt_context.winning_patterns),
+            )
+        except Exception as e:
+            logger.warning(
+                "optimization_context_build_failed",
+                project_id=project_id,
+                error=str(e),
+            )
+
+    # Step 4: Dispatch video generation pipelines with auto-chain settings
     dispatched = []
     for job_id in job_ids:
-        pipeline_result = run_pipeline_for_job_task.delay(job_id)
+        pipeline_result = run_pipeline_for_job_task.delay(
+            job_id,
+            auto_render=auto_render,
+            auto_publish=auto_publish,
+        )
         dispatched.append({"job_id": job_id, "task_id": pipeline_result.id})
 
     # Update batch status
@@ -434,6 +548,7 @@ def run_nightly_batch_task(
         jobs_dispatched=len(dispatched),
         auto_render=auto_render,
         auto_publish=auto_publish,
+        optimization_context_built=optimization_context_built,
     )
 
     return {
@@ -442,6 +557,7 @@ def run_nightly_batch_task(
         "batch_id": batch_result.get("batch_id"),
         "topics_generated": len(topics),
         "jobs_created": len(job_ids),
+        "optimization_context_built": optimization_context_built,
         "jobs_dispatched": len(dispatched),
         "exploit_count": batch_result.get("exploit_count", 0),
         "explore_count": batch_result.get("explore_count", 0),

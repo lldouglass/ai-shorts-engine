@@ -20,6 +20,7 @@ from shorts_engine.domain.enums import (
 )
 from shorts_engine.logging import get_logger
 from shorts_engine.presets.styles import StylePreset, get_preset
+from shorts_engine.services.learning.context import OptimizationContext
 from shorts_engine.services.learning.recipe import Recipe
 from shorts_engine.services.planner import ScenePlan, VideoPlan
 
@@ -182,9 +183,15 @@ Guidelines:
             ending_type=constraints.ending_type,
         )
 
-    def _build_user_prompt(self, idea: str, preset: StylePreset) -> str:
-        """Build the user prompt with idea and style context."""
-        return f"""Create a video plan for the following concept:
+    def _build_user_prompt(
+        self,
+        idea: str,
+        preset: StylePreset,
+        optimization_context: OptimizationContext | None = None,
+    ) -> str:
+        """Build the user prompt with idea, style context, and optimization learnings."""
+        # Base prompt
+        prompt = f"""Create a video plan for the following concept:
 
 ## Video Idea
 {idea}
@@ -205,20 +212,30 @@ Guidelines:
 {preset.camera_style}
 
 ### Target Duration Per Scene:
-{preset.default_duration_per_scene} seconds
+{preset.default_duration_per_scene} seconds"""
 
-Generate a video plan that brings this idea to life in the {preset.display_name} style, following all the constraints provided."""
+        # Add optimization context if available
+        if optimization_context:
+            context_text = optimization_context.format_for_prompt()
+            if context_text:
+                prompt += f"\n\n{context_text}"
+
+        prompt += f"\n\nGenerate a video plan that brings this idea to life in the {preset.display_name} style, following all the constraints provided."
+
+        return prompt
 
     async def plan(
         self,
         idea: str,
         recipe: Recipe,
+        optimization_context: OptimizationContext | None = None,
     ) -> VideoPlan:
         """Generate a video plan that conforms to a recipe.
 
         Args:
             idea: One-paragraph description of the video concept
             recipe: Recipe defining constraints
+            optimization_context: Optional context with learnings from past performance
 
         Returns:
             VideoPlan with title, description, and scenes
@@ -241,12 +258,16 @@ Generate a video plan that brings this idea to life in the {preset.display_name}
             scene_count=constraints.scene_count,
             hook_type=constraints.hook_type,
             ending_type=constraints.ending_type,
+            has_optimization_context=optimization_context is not None,
         )
 
         # Build messages
         messages = [
             LLMMessage(role="system", content=self._build_system_prompt(constraints)),
-            LLMMessage(role="user", content=self._build_user_prompt(idea, preset)),
+            LLMMessage(
+                role="user",
+                content=self._build_user_prompt(idea, preset, optimization_context),
+            ),
         ]
 
         # Get LLM response
@@ -320,6 +341,7 @@ Generate a video plan that brings this idea to life in the {preset.display_name}
                 "recipe_hash": recipe.recipe_hash,
                 "hook_type": constraints.hook_type,
                 "ending_type": constraints.ending_type,
+                "optimization_context_used": optimization_context is not None,
             },
         )
 
