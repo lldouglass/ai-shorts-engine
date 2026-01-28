@@ -18,10 +18,13 @@ from uuid import UUID
 from celery import chain
 from sqlalchemy import select
 
+from shorts_engine.adapters.image_gen.base import MotionParams
 from shorts_engine.adapters.renderer.base import RendererProvider
 from shorts_engine.adapters.renderer.creatomate import (
     CreatomateProvider,
     CreatomateRenderRequest,
+    ImageCompositionRequest,
+    ImageSceneClip,
     SceneClip,
 )
 from shorts_engine.adapters.renderer.stub import StubRendererProvider
@@ -317,38 +320,100 @@ def render_final_video_task(
         if not scenes:
             raise ValueError("No scenes found for rendering")
 
-        # Build scene clips list
+        # Detect if we're in image mode by checking asset types
+        # Check if first scene has an image asset
+        first_scene = scenes[0]
+        image_asset = session.execute(
+            select(AssetModel).where(
+                AssetModel.scene_id == first_scene.id,
+                AssetModel.asset_type == "scene_image",
+                AssetModel.status == "ready",
+            )
+        ).scalar_one_or_none()
+
+        is_image_mode = image_asset is not None
+
+        # Build scene clips or image clips based on mode
         scene_clips: list[SceneClip] = []
+        image_clips: list[ImageSceneClip] = []
 
         for scene in scenes:
-            # Get the scene's video clip asset
-            clip_asset = session.execute(
-                select(AssetModel).where(
-                    AssetModel.scene_id == scene.id,
-                    AssetModel.asset_type == "scene_clip",
-                    AssetModel.status == "ready",
+            if is_image_mode:
+                # Get the scene's image asset
+                img_asset = session.execute(
+                    select(AssetModel).where(
+                        AssetModel.scene_id == scene.id,
+                        AssetModel.asset_type == "scene_image",
+                        AssetModel.status == "ready",
+                    )
+                ).scalar_one_or_none()
+
+                if not img_asset:
+                    raise ValueError(f"No image found for scene {scene.scene_number}")
+
+                # Get URL for the image
+                img_url = img_asset.url
+                if not img_url and img_asset.file_path:
+                    img_url = f"file://{img_asset.file_path}"
+
+                if not img_url:
+                    raise ValueError(f"No URL available for scene {scene.scene_number} image")
+
+                # Get motion parameters from metadata
+                motion = MotionParams()
+                if img_asset.metadata_ and img_asset.metadata_.get("motion_params"):
+                    mp = img_asset.metadata_["motion_params"]
+                    motion = MotionParams(
+                        zoom_start=mp.get("zoom_start", 1.0),
+                        zoom_end=mp.get("zoom_end", 1.1),
+                        pan_x_start=mp.get("pan_x_start", 0.0),
+                        pan_x_end=mp.get("pan_x_end", 0.0),
+                        pan_y_start=mp.get("pan_y_start", 0.0),
+                        pan_y_end=mp.get("pan_y_end", 0.0),
+                        ease=mp.get("ease", "ease-in-out"),
+                        transition=mp.get("transition", "cut"),
+                    )
+
+                image_clips.append(
+                    ImageSceneClip(
+                        image_url=img_url,
+                        duration_seconds=scene.duration_seconds,
+                        motion=motion,
+                        caption_text=scene.caption_beat if include_captions else None,
+                        scene_number=scene.scene_number,
+                        transition=motion.transition,
+                        transition_duration=motion.transition_duration,
+                    )
                 )
-            ).scalar_one_or_none()
+            else:
+                # Get the scene's video clip asset
+                clip_asset = session.execute(
+                    select(AssetModel).where(
+                        AssetModel.scene_id == scene.id,
+                        AssetModel.asset_type == "scene_clip",
+                        AssetModel.status == "ready",
+                    )
+                ).scalar_one_or_none()
 
-            if not clip_asset:
-                raise ValueError(f"No video clip found for scene {scene.scene_number}")
+                if not clip_asset:
+                    raise ValueError(f"No video clip found for scene {scene.scene_number}")
 
-            # Get URL for the clip
-            clip_url = clip_asset.url
-            if not clip_url and clip_asset.file_path:
-                clip_url = f"file://{clip_asset.file_path}"
+                # Get URL for the clip
+                clip_url = clip_asset.url
+                if not clip_url and clip_asset.file_path:
+                    clip_url = f"file://{clip_asset.file_path}"
 
-            if not clip_url:
-                raise ValueError(f"No URL available for scene {scene.scene_number} clip")
+                if not clip_url:
+                    raise ValueError(f"No URL available for scene {scene.scene_number} clip")
 
-            scene_clips.append(
-                SceneClip(
-                    video_url=clip_url,
-                    duration_seconds=scene.duration_seconds,
-                    caption_text=scene.caption_beat if include_captions else None,
-                    scene_number=scene.scene_number,
+                scene_clips.append(
+                    SceneClip(
+                        video_url=clip_url,
+                        duration_seconds=scene.duration_seconds,
+                        caption_text=scene.caption_beat if include_captions else None,
+                        scene_number=scene.scene_number,
+                    )
                 )
-            )
 
         # Get voiceover URL if available
         voiceover_url = None
@@ -376,17 +441,33 @@ def render_final_video_task(
             provider = get_renderer_provider()
 
             if isinstance(provider, CreatomateProvider):
-                # Use Creatomate's composition rendering
-                request = CreatomateRenderRequest(
-                    scenes=scene_clips,
-                    voiceover_url=voiceover_url,
-                    background_music_url=background_music_url,
-                    width=1080,
-                    height=1920,
-                    fps=30,
-                )
-
-                result = run_async(provider.render_composition(request))
+                if is_image_mode:
+                    # Use image composition with Ken Burns effects
+                    logger.info(
+                        "render_using_image_composition",
+                        video_job_id=video_job_id,
+                        image_count=len(image_clips),
+                    )
+                    request = ImageCompositionRequest(
+                        images=image_clips,
+                        voiceover_url=voiceover_url,
+                        background_music_url=background_music_url,
+                        width=1080,
+                        height=1920,
+                        fps=30,
+                    )
+                    result = run_async(provider.render_image_composition(request))
+                else:
+                    # Use video composition rendering
+                    request = CreatomateRenderRequest(
+                        scenes=scene_clips,
+                        voiceover_url=voiceover_url,
+                        background_music_url=background_music_url,
+                        width=1080,
+                        height=1920,
+                        fps=30,
+                    )
+                    result = run_async(provider.render_composition(request))
             else:
                 # Stub provider - simulate rendering
                 from shorts_engine.adapters.renderer.base import RenderRequest
