@@ -60,6 +60,10 @@ def get_video_gen_provider() -> VideoGenProvider:
 
     if provider == "luma":
         return LumaProvider()
+    elif provider == "veo":
+        from shorts_engine.adapters.video_gen.veo import VeoProvider
+
+        return VeoProvider(model=settings.veo_model)
     else:
         return StubVideoGenProvider()
 

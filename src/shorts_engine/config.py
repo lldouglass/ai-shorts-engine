@@ -54,7 +54,7 @@ class Settings(BaseSettings):
     # Providers
     video_gen_provider: str = Field(
         default="stub",
-        description="Video generation provider (stub, luma)",
+        description="Video generation provider (stub, luma, veo)",
     )
     renderer_provider: str = Field(
         default="stub",
@@ -106,6 +106,11 @@ class Settings(BaseSettings):
     openai_api_key: str | None = Field(default=None, description="OpenAI API key")
     anthropic_api_key: str | None = Field(default=None, description="Anthropic API key")
     luma_api_key: str | None = Field(default=None, description="Luma AI API key")
+    google_api_key: str | None = Field(default=None, description="Google API key for Gemini/Veo")
+    veo_model: str = Field(
+        default="veo-2.0-generate-001",
+        description="Veo model (veo-2.0-generate-001, veo-3.1-fast-generate-preview)",
+    )
     creatomate_api_key: str | None = Field(default=None, description="Creatomate API key")
     creatomate_webhook_url: str | None = Field(
         default=None, description="Creatomate webhook URL for render completion"
