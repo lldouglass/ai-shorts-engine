@@ -2,7 +2,7 @@
 
 import json
 
-from shorts_engine.adapters.llm.base import LLMMessage, LLMProvider, LLMResponse
+from shorts_engine.adapters.llm.base import LLMMessage, LLMProvider, LLMResponse, VisionMessage
 from shorts_engine.logging import get_logger
 
 logger = get_logger(__name__)
@@ -75,6 +75,79 @@ class StubLLMProvider(LLMProvider):
                 "prompt_tokens": len(user_message.split()),
                 "completion_tokens": len(content.split()),
                 "total_tokens": len(user_message.split()) + len(content.split()),
+            },
+            finish_reason="stop",
+        )
+
+    @property
+    def supports_vision(self) -> bool:
+        """Stub provider supports vision for testing."""
+        return True
+
+    async def complete_with_vision(
+        self,
+        messages: list[VisionMessage],
+        temperature: float = 0.7,  # noqa: ARG002
+        max_tokens: int = 4096,  # noqa: ARG002
+        json_mode: bool = False,
+    ) -> LLMResponse:
+        """Return a mock vision completion response."""
+        image_count = sum(len(m.image_urls) for m in messages)
+
+        logger.info(
+            "stub_llm_vision_complete",
+            message_count=len(messages),
+            image_count=image_count,
+            json_mode=json_mode,
+        )
+
+        # Extract the user's last message text
+        user_message = ""
+        for msg in reversed(messages):
+            if msg.role == "user":
+                user_message = msg.text
+                break
+
+        if json_mode:
+            # Return a mock image critique JSON
+            content = json.dumps(
+                {
+                    "visual_coherence_score": 0.85,
+                    "style_consistency_score": 0.82,
+                    "overall_passed": True,
+                    "per_scene_feedback": [
+                        {
+                            "scene_number": i + 1,
+                            "score": 0.80 + (i % 3) * 0.05,
+                            "feedback": f"Scene {i + 1} maintains good visual consistency",
+                            "issues": [],
+                        }
+                        for i in range(min(image_count, 7))
+                    ],
+                    "improvement_suggestions": [
+                        "Consider adding more contrast between scenes",
+                        "The color palette could be more unified",
+                    ],
+                    "summary": "Overall the images show good visual coherence and style consistency.",
+                },
+                indent=2,
+            )
+        else:
+            content = (
+                f"Vision analysis of {image_count} images: "
+                f"The images show consistent visual style and coherent narrative flow. "
+                f"Original prompt: {user_message[:50]}..."
+            )
+
+        return LLMResponse(
+            content=content,
+            model="stub-vision-model",
+            usage={
+                "prompt_tokens": len(user_message.split()) + image_count * 1000,
+                "completion_tokens": len(content.split()),
+                "total_tokens": len(user_message.split())
+                + image_count * 1000
+                + len(content.split()),
             },
             finish_reason="stop",
         )

@@ -10,6 +10,7 @@ from shorts_engine.adapters.renderer.creatomate import (
     CreatomateRenderRequest,
     ImageCompositionRequest,
     ImageSceneClip,
+    MotionParams,
     SceneClip,
     build_creatomate_payload,
 )
@@ -23,6 +24,7 @@ __all__ = [
     "CreatomateRenderRequest",
     "ImageCompositionRequest",
     "ImageSceneClip",
+    "MotionParams",
     "SceneClip",
     "StubRendererProvider",
     "build_creatomate_payload",

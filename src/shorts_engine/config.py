@@ -102,20 +102,6 @@ class Settings(BaseSettings):
         description="Enable fully autonomous video generation loop",
     )
 
-    # Visual Generation Mode
-    visual_gen_mode: str = Field(
-        default="video",
-        description="Visual generation mode: 'video' for AI video clips, 'image' for AI images with motion",
-    )
-    image_gen_provider: str = Field(
-        default="stub",
-        description="Image generation provider (stub, dalle3)",
-    )
-    image_gen_quality: str = Field(
-        default="hd",
-        description="Image quality for DALL-E (standard, hd)",
-    )
-
     # API Keys (optional, for real providers)
     openai_api_key: str | None = Field(default=None, description="OpenAI API key")
     anthropic_api_key: str | None = Field(default=None, description="Anthropic API key")
@@ -253,6 +239,40 @@ class Settings(BaseSettings):
     metrics_retention_days: int = Field(
         default=30,
         description="Number of days to retain metrics data",
+    )
+
+    # Ralph Loop (Agentic Retry for Video Generation)
+    ralph_loop_enabled: bool = Field(
+        default=True,
+        description="Enable Ralph agentic retry loop for video generation quality",
+    )
+    ralph_max_iterations: int = Field(
+        default=3,
+        description="Maximum iterations for Ralph loop before accepting best result",
+    )
+    ralph_visual_coherence_threshold: float = Field(
+        default=0.75,
+        description="Minimum visual coherence score (0.0-1.0) for Ralph loop to pass",
+    )
+    ralph_style_consistency_threshold: float = Field(
+        default=0.75,
+        description="Minimum style consistency score (0.0-1.0) for Ralph loop to pass",
+    )
+    ralph_motion_coherence_threshold: float = Field(
+        default=0.70,
+        description="Minimum motion coherence score (0.0-1.0) for Ralph loop to pass",
+    )
+    ralph_temporal_consistency_threshold: float = Field(
+        default=0.70,
+        description="Minimum temporal consistency score (0.0-1.0) for Ralph loop to pass",
+    )
+    ralph_frames_per_scene: int = Field(
+        default=3,
+        description="Number of frames to extract per scene for video critique",
+    )
+    ralph_use_best_on_failure: bool = Field(
+        default=True,
+        description="On Ralph loop exhaustion, restore the best iteration's clips instead of failing",
     )
 
 

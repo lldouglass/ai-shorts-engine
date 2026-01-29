@@ -7,12 +7,30 @@ from typing import Any
 
 import httpx
 
-from shorts_engine.adapters.image_gen.base import MotionParams
 from shorts_engine.adapters.renderer.base import RendererProvider, RenderRequest, RenderResult
 from shorts_engine.config import settings
 from shorts_engine.logging import get_logger
 
 logger = get_logger(__name__)
+
+
+@dataclass
+class MotionParams:
+    """Ken Burns motion parameters for image animation.
+
+    Controls zoom and pan effects applied to static images
+    to create the "limited animation" style.
+    """
+
+    zoom_start: float = 1.0  # Starting zoom level (1.0 = no zoom)
+    zoom_end: float = 1.1  # Ending zoom level
+    pan_x_start: float = 0.0  # Starting horizontal pan (-0.5 to 0.5)
+    pan_x_end: float = 0.0  # Ending horizontal pan
+    pan_y_start: float = 0.0  # Starting vertical pan (-0.5 to 0.5)
+    pan_y_end: float = 0.0  # Ending vertical pan
+    ease: str = "ease-in-out"  # CSS easing function
+    transition: str = "crossfade"  # Transition to next scene
+    transition_duration: float = 0.3  # Duration of transition in seconds
 
 
 @dataclass

@@ -100,6 +100,12 @@ class VideoJobModel(Base):
     qa_attempts: Mapped[int] = mapped_column(Integer, server_default="0")
     last_qa_error: Mapped[str | None] = mapped_column(Text, nullable=True)
 
+    # Ralph loop fields (agentic retry for image generation)
+    ralph_loop_enabled: Mapped[bool] = mapped_column(Boolean, server_default="false")
+    ralph_current_iteration: Mapped[int] = mapped_column(Integer, server_default="0")
+    ralph_max_iterations: Mapped[int] = mapped_column(Integer, server_default="3")
+    ralph_status: Mapped[str | None] = mapped_column(String(50), nullable=True, index=True)
+
     # Relationships
     project: Mapped["ProjectModel"] = relationship("ProjectModel", back_populates="video_jobs")
     scenes: Mapped[list["SceneModel"]] = relationship(
@@ -123,6 +129,9 @@ class VideoJobModel(Base):
     )
     qa_results: Mapped[list["QAResultModel"]] = relationship(
         "QAResultModel", back_populates="video_job", cascade="all, delete-orphan"
+    )
+    ralph_iterations: Mapped[list["RalphIterationModel"]] = relationship(
+        "RalphIterationModel", back_populates="video_job", cascade="all, delete-orphan"
     )
 
 
@@ -780,6 +789,61 @@ class QAResultModel(Base):
 
     # Relationships
     video_job: Mapped["VideoJobModel"] = relationship("VideoJobModel", back_populates="qa_results")
+
+
+class RalphIterationModel(Base):
+    """Ralph loop iteration tracking for image generation quality."""
+
+    __tablename__ = "ralph_iterations"
+
+    id: Mapped[PyUUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid4)
+    video_job_id: Mapped[PyUUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("video_jobs.id", ondelete="CASCADE"), index=True
+    )
+    iteration_number: Mapped[int] = mapped_column(Integer, nullable=False)
+
+    # Scores from LLM vision critique
+    visual_coherence_score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    style_consistency_score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    motion_coherence_score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    temporal_consistency_score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    hook_clarity_score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    coherence_score: Mapped[float | None] = mapped_column(Float, nullable=True)
+
+    # Pass/fail flags for each criterion
+    visual_coherence_passed: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    style_consistency_passed: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    motion_coherence_passed: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    temporal_consistency_passed: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    qa_passed: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    llm_critique_passed: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+
+    # LLM critique details
+    llm_critique_feedback: Mapped[str | None] = mapped_column(Text, nullable=True)
+    llm_critique_raw: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
+    per_scene_feedback: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
+
+    # Overall status
+    all_criteria_passed: Mapped[bool] = mapped_column(Boolean, server_default="false")
+    is_final_attempt: Mapped[bool] = mapped_column(Boolean, server_default="false")
+
+    # Asset snapshot (to restore best iteration on failure)
+    asset_snapshot: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
+
+    # Timestamps
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    # Constraints
+    __table_args__ = (
+        UniqueConstraint("video_job_id", "iteration_number", name="uq_ralph_iteration"),
+    )
+
+    # Relationships
+    video_job: Mapped["VideoJobModel"] = relationship(
+        "VideoJobModel", back_populates="ralph_iterations"
+    )
 
 
 class PipelineMetricModel(Base):

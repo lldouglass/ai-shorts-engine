@@ -171,3 +171,12 @@ class QAStage(StrEnum):
 
     POST_PLANNING = "post_planning"
     POST_RENDER = "post_render"
+
+
+class RalphStatus(StrEnum):
+    """Status of the Ralph (agentic retry) loop."""
+
+    PENDING = "pending"  # Ralph loop not yet started
+    RUNNING = "running"  # Currently iterating
+    PASSED = "passed"  # All criteria met
+    FAILED = "failed"  # Max iterations exhausted without passing

@@ -18,13 +18,13 @@ from uuid import UUID
 from celery import chain
 from sqlalchemy import select
 
-from shorts_engine.adapters.image_gen.base import MotionParams
 from shorts_engine.adapters.renderer.base import RendererProvider
 from shorts_engine.adapters.renderer.creatomate import (
     CreatomateProvider,
     CreatomateRenderRequest,
     ImageCompositionRequest,
     ImageSceneClip,
+    MotionParams,
     SceneClip,
 )
 from shorts_engine.adapters.renderer.stub import StubRendererProvider

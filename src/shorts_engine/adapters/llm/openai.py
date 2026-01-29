@@ -4,7 +4,7 @@ from typing import Any
 
 import httpx
 
-from shorts_engine.adapters.llm.base import LLMMessage, LLMProvider, LLMResponse
+from shorts_engine.adapters.llm.base import LLMMessage, LLMProvider, LLMResponse, VisionMessage
 from shorts_engine.config import settings
 from shorts_engine.logging import get_logger
 
@@ -78,6 +78,94 @@ class OpenAIProvider(LLMProvider):
 
         logger.info(
             "openai_response",
+            model=self.model,
+            tokens_used=usage.get("total_tokens", 0),
+            finish_reason=choice.get("finish_reason"),
+        )
+
+        return LLMResponse(
+            content=choice["message"]["content"],
+            model=data["model"],
+            usage={
+                "prompt_tokens": usage.get("prompt_tokens", 0),
+                "completion_tokens": usage.get("completion_tokens", 0),
+                "total_tokens": usage.get("total_tokens", 0),
+            },
+            raw_response=data,
+            finish_reason=choice.get("finish_reason"),
+        )
+
+    @property
+    def supports_vision(self) -> bool:
+        """GPT-4o and GPT-4-turbo support vision."""
+        return "gpt-4" in self.model.lower()
+
+    async def complete_with_vision(
+        self,
+        messages: list[VisionMessage],
+        temperature: float = 0.7,
+        max_tokens: int = 4096,
+        json_mode: bool = False,
+    ) -> LLMResponse:
+        """Generate completion with vision support using OpenAI API."""
+        if not self.api_key:
+            raise ValueError("OpenAI API key not configured")
+
+        headers = {
+            "Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json",
+        }
+
+        # Convert VisionMessages to OpenAI format
+        formatted_messages = []
+        for msg in messages:
+            if msg.image_urls:
+                # Multi-part content with text and images
+                content: list[dict[str, Any]] = [{"type": "text", "text": msg.text}]
+                for url in msg.image_urls:
+                    content.append(
+                        {
+                            "type": "image_url",
+                            "image_url": {"url": url, "detail": "high"},
+                        }
+                    )
+                formatted_messages.append({"role": msg.role, "content": content})
+            else:
+                # Text-only message
+                formatted_messages.append({"role": msg.role, "content": msg.text})
+
+        payload: dict[str, Any] = {
+            "model": self.model,
+            "messages": formatted_messages,
+            "temperature": temperature,
+            "max_tokens": max_tokens,
+        }
+
+        if json_mode:
+            payload["response_format"] = {"type": "json_object"}
+
+        logger.debug(
+            "openai_vision_request",
+            model=self.model,
+            message_count=len(messages),
+            image_count=sum(len(m.image_urls) for m in messages),
+            json_mode=json_mode,
+        )
+
+        async with httpx.AsyncClient(timeout=180.0) as client:  # Longer timeout for vision
+            response = await client.post(
+                f"{self.base_url}/chat/completions",
+                headers=headers,
+                json=payload,
+            )
+            response.raise_for_status()
+            data = response.json()
+
+        choice = data["choices"][0]
+        usage = data.get("usage", {})
+
+        logger.info(
+            "openai_vision_response",
             model=self.model,
             tokens_used=usage.get("total_tokens", 0),
             finish_reason=choice.get("finish_reason"),

@@ -24,6 +24,15 @@ class LLMMessage:
     content: str
 
 
+@dataclass
+class VisionMessage:
+    """A message that can include images for vision-capable models."""
+
+    role: str  # "system", "user", "assistant"
+    text: str
+    image_urls: list[str] = field(default_factory=list)  # URLs or base64 data URIs
+
+
 class LLMProvider(ABC):
     """Abstract base class for LLM providers.
 
@@ -59,6 +68,38 @@ class LLMProvider(ABC):
             LLMResponse with generated content
         """
         ...
+
+    async def complete_with_vision(
+        self,
+        messages: list[VisionMessage],
+        temperature: float = 0.7,
+        max_tokens: int = 4096,
+        json_mode: bool = False,
+    ) -> LLMResponse:
+        """Generate a completion from messages that may include images.
+
+        Args:
+            messages: List of vision messages with optional images
+            temperature: Sampling temperature (0-2)
+            max_tokens: Maximum tokens in response
+            json_mode: If True, request JSON output format
+
+        Returns:
+            LLMResponse with generated content
+
+        Raises:
+            NotImplementedError: If the provider doesn't support vision
+        """
+        raise NotImplementedError(f"{self.name} does not support vision")
+
+    @property
+    def supports_vision(self) -> bool:
+        """Check if this provider supports vision (image) inputs.
+
+        Returns:
+            True if the provider can process images
+        """
+        return False
 
     async def health_check(self) -> bool:
         """Check if the provider is available.
