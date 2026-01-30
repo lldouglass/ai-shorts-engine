@@ -36,12 +36,24 @@ class ReadinessResponse(BaseModel):
     description="Basic health check endpoint that verifies the API is running.",
 )
 async def health_check() -> HealthResponse:
-    """Basic health check - is the API up?"""
+    """Basic health check - is the API up?
+
+    Returns adapter configuration status (which providers are configured).
+    """
     from shorts_engine import __version__
+
+    # Show which providers are configured (not full health check)
+    components = {
+        "llm": settings.llm_provider,
+        "video_gen": settings.video_gen_provider,
+        "renderer": settings.renderer_provider,
+        "voiceover": settings.voiceover_provider,
+    }
 
     return HealthResponse(
         status="healthy",
         version=__version__,
+        components={k: v != "stub" for k, v in components.items()},
     )
 
 
