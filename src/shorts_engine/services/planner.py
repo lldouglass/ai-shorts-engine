@@ -112,9 +112,20 @@ Guidelines:
             logger.warning("No LLM API keys configured, using stub provider")
             return StubLLMProvider()
 
-    def _build_user_prompt(self, idea: str, preset: StylePreset) -> str:
+    def _build_user_prompt(
+        self, idea: str, preset: StylePreset, optimization_context: str | None = None
+    ) -> str:
         """Build the user prompt with idea and style context."""
+        optimization_section = ""
+        if optimization_context:
+            optimization_section = f"""
+{optimization_context}
+
+Use these learnings to inform your creative choices. Patterns that work should be incorporated; patterns to avoid should be steered away from.
+
+"""
         return f"""Create a video plan for the following concept:
+{optimization_section}
 
 ## Video Idea
 {idea}
@@ -139,12 +150,18 @@ Guidelines:
 
 Generate a compelling 7-8 scene video plan that brings this idea to life in the {preset.display_name} style."""
 
-    async def plan(self, idea: str, style_preset_name: str) -> VideoPlan:
+    async def plan(
+        self,
+        idea: str,
+        style_preset_name: str,
+        optimization_context: str | None = None,
+    ) -> VideoPlan:
         """Generate a video plan from an idea and style preset.
 
         Args:
             idea: One-paragraph description of the video concept
             style_preset_name: Name of the style preset to use
+            optimization_context: Optional formatted string with learnings from past performance
 
         Returns:
             VideoPlan with title, description, and scenes
@@ -167,12 +184,16 @@ Generate a compelling 7-8 scene video plan that brings this idea to life in the 
             idea_length=len(idea),
             style_preset=preset.name,
             llm_provider=self.llm.name,
+            has_optimization_context=optimization_context is not None,
         )
 
         # Build messages
         messages = [
             LLMMessage(role="system", content=self.SYSTEM_PROMPT),
-            LLMMessage(role="user", content=self._build_user_prompt(idea, preset)),
+            LLMMessage(
+                role="user",
+                content=self._build_user_prompt(idea, preset, optimization_context),
+            ),
         ]
 
         # Get LLM response

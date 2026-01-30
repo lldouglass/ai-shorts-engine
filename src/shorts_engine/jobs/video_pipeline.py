@@ -31,6 +31,7 @@ from shorts_engine.domain.enums import QACheckType, QAStage, QAStatus
 from shorts_engine.logging import get_logger
 from shorts_engine.presets.styles import get_preset
 from shorts_engine.services.alerting import alert_pipeline_failure, alert_qa_failure
+from shorts_engine.services.learning.context import OptimizationContextBuilder
 from shorts_engine.services.metrics import (
     estimate_planning_cost,
     record_cost_estimate,
@@ -146,9 +147,30 @@ def plan_job_task(
         session.commit()
 
         try:
+            # Build optimization context from historical performance
+            optimization_context = None
+            try:
+                context_builder = OptimizationContextBuilder(session)
+                opt_context = context_builder.build(job.project_id)
+                if opt_context.sample_size > 0:
+                    optimization_context = opt_context.format_for_prompt()
+                    logger.info(
+                        "optimization_context_loaded",
+                        video_job_id=video_job_id,
+                        sample_size=opt_context.sample_size,
+                        winning_patterns=len(opt_context.winning_patterns),
+                    )
+            except Exception as e:
+                # Don't fail planning if context building fails
+                logger.warning(
+                    "optimization_context_build_failed",
+                    video_job_id=video_job_id,
+                    error=str(e),
+                )
+
             # Run planner
             planner = PlannerService()
-            plan = run_async(planner.plan(job.idea, job.style_preset))
+            plan = run_async(planner.plan(job.idea, job.style_preset, optimization_context))
 
             # Update job with plan
             job.title = plan.title
