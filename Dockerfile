@@ -8,14 +8,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libpq-dev \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy dependency files first for better caching
+# Copy dependency files and source for installation
 COPY pyproject.toml ./
+COPY src/ ./src/
 
 # Install Python dependencies
 RUN pip install --no-cache-dir -e .
-
-# Copy application code
-COPY src/ ./src/
 COPY alembic.ini ./
 COPY migrations/ ./migrations/
 

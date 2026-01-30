@@ -59,7 +59,7 @@ services:
       context: .
       dockerfile: Dockerfile
     container_name: shorts-worker
-    command: celery -A shorts_engine.worker worker --loglevel=info
+    command: celery -A shorts_engine.worker worker --loglevel=info -Q celery,default,high,low
     volumes:
       - ./src:/app/src:ro
     environment:
