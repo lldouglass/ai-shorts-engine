@@ -37,7 +37,7 @@ def upgrade() -> None:
         "video_jobs",
         sa.Column("last_qa_error", sa.Text, nullable=True),
     )
-    op.create_index("ix_video_jobs_qa_status", "video_jobs", ["qa_status"])
+    # Note: index for qa_status is created by index=True above
 
     # Create qa_results table for QA check history
     op.create_table(
@@ -102,12 +102,7 @@ def upgrade() -> None:
             index=True,
         ),
     )
-    op.create_index("ix_pipeline_metrics_metric_name", "pipeline_metrics", ["metric_name"])
-    op.create_index(
-        "ix_pipeline_metrics_recorded_at",
-        "pipeline_metrics",
-        ["recorded_at"],
-    )
+    # Note: single-column indexes created by index=True above
     # Composite index for dashboard queries
     op.create_index(
         "ix_pipeline_metrics_name_time",
@@ -117,10 +112,8 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    # Drop pipeline_metrics
+    # Drop pipeline_metrics (composite index first, others dropped with table)
     op.drop_index("ix_pipeline_metrics_name_time", table_name="pipeline_metrics")
-    op.drop_index("ix_pipeline_metrics_recorded_at", table_name="pipeline_metrics")
-    op.drop_index("ix_pipeline_metrics_metric_name", table_name="pipeline_metrics")
     op.drop_table("pipeline_metrics")
 
     # Drop qa_results
@@ -128,8 +121,7 @@ def downgrade() -> None:
     op.drop_index("ix_qa_results_check_type", table_name="qa_results")
     op.drop_table("qa_results")
 
-    # Remove video_jobs QA columns
-    op.drop_index("ix_video_jobs_qa_status", table_name="video_jobs")
+    # Remove video_jobs QA columns (index dropped with column)
     op.drop_column("video_jobs", "last_qa_error")
     op.drop_column("video_jobs", "qa_attempts")
     op.drop_column("video_jobs", "qa_status")
