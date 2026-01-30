@@ -73,3 +73,6 @@ make lint      # Check code
 - `curl http://localhost:8000/health` returns `{"status": "healthy"}`
 - `curl http://localhost:8000/health/ready` shows all components ready
 - `make smoke` completes successfully
+
+
+## Never touch the .env file. 
