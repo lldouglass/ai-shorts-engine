@@ -39,6 +39,8 @@ services:
       - "8000:8000"
     volumes:
       - ./src:/app/src:ro
+    env_file:
+      - .env
     environment:
       DATABASE_URL: postgresql://shorts:shorts@postgres:5432/shorts
       REDIS_URL: redis://redis:6379/0
@@ -60,6 +62,8 @@ services:
     command: celery -A shorts_engine.worker worker --loglevel=info -Q celery,default,high,low
     volumes:
       - ./src:/app/src:ro
+    env_file:
+      - .env
     environment:
       DATABASE_URL: postgresql://shorts:shorts@postgres:5432/shorts
       REDIS_URL: redis://redis:6379/0
@@ -67,6 +71,7 @@ services:
       CELERY_RESULT_BACKEND: redis://redis:6379/0
       LOG_LEVEL: INFO
       LOG_FORMAT: json
+      RALPH_LOOP_ENABLED: "false"
     depends_on:
       postgres:
         condition: service_healthy
@@ -81,6 +86,8 @@ services:
     command: celery -A shorts_engine.worker beat --loglevel=info
     volumes:
       - ./src:/app/src:ro
+    env_file:
+      - .env
     environment:
       DATABASE_URL: postgresql://shorts:shorts@postgres:5432/shorts
       REDIS_URL: redis://redis:6379/0

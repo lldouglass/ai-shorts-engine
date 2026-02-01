@@ -89,6 +89,7 @@ class StorageService:
         scene_id: UUID | None = None,
         filename: str | None = None,
         metadata: dict[str, Any] | None = None,
+        headers: dict[str, str] | None = None,
     ) -> StoredAsset:
         """Download and store an asset from a URL.
 
@@ -99,6 +100,7 @@ class StorageService:
             scene_id: Optional scene ID for scene-level assets
             filename: Optional custom filename
             metadata: Optional metadata to store
+            headers: Optional HTTP headers for authenticated downloads
 
         Returns:
             StoredAsset with local file information
@@ -125,7 +127,7 @@ class StorageService:
 
         try:
             async with httpx.AsyncClient(timeout=300.0, follow_redirects=True) as client:
-                response = await client.get(url)
+                response = await client.get(url, headers=headers)
                 response.raise_for_status()
                 content = response.content
 

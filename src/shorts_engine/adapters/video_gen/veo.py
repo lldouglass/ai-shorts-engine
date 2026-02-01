@@ -176,6 +176,9 @@ class VeoProvider(VideoGenProvider):
                             "operation_name": operation_name,
                             "video_url": video_uri,
                             "model": self.model,
+                            "download_headers": {
+                                "x-goog-api-key": self.api_key,
+                            },
                         },
                     )
 

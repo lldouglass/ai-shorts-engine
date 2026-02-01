@@ -466,6 +466,10 @@ def generate_scene_clip_task(
 
             if video_url:
                 # Download and store from URL
+                # Get download headers if provider requires authentication (e.g., Veo)
+                download_headers = (
+                    result.metadata.get("download_headers") if result.metadata else None
+                )
                 stored = run_async(
                     storage.store_from_url(
                         url=video_url,
@@ -478,6 +482,7 @@ def generate_scene_clip_task(
                                 result.metadata.get("generation_id") if result.metadata else None
                             ),
                         },
+                        headers=download_headers,
                     )
                 )
             elif result.video_data:
