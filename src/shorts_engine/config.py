@@ -246,6 +246,12 @@ class Settings(BaseSettings):
         description="Number of days to retain metrics data",
     )
 
+    # Video Generation Rate Limiting
+    video_gen_rate_limit_seconds: int = Field(
+        default=15,
+        description="Seconds between video generation requests to avoid API rate limits",
+    )
+
     # Ralph Loop (Agentic Retry for Video Generation)
     ralph_loop_enabled: bool = Field(
         default=True,

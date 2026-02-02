@@ -257,16 +257,16 @@ def generate_voiceover_task(
 )
 def render_final_video_task(
     self: Any,  # noqa: ARG001
-    video_job_id: str,
-    voiceover_result: dict[str, Any] | None = None,
+    voiceover_result: dict[str, Any] | None = None,  # First - receives chain result
+    video_job_id: str | None = None,  # Second - passed as kwarg
     include_captions: bool = True,
     background_music_url: str | None = None,
 ) -> dict[str, Any]:
     """Render the final video composition.
 
     Args:
+        voiceover_result: Optional result from voiceover generation (or chain result)
         video_job_id: UUID of the video job
-        voiceover_result: Optional result from voiceover generation
         include_captions: Whether to burn in captions
         background_music_url: Optional background music URL
 
@@ -274,6 +274,13 @@ def render_final_video_task(
         Dict with render information
     """
     task_id = self.request.id
+
+    # Extract video_job_id from chain result if not passed directly
+    if video_job_id is None and voiceover_result:
+        video_job_id = voiceover_result.get("video_job_id")
+    if not video_job_id:
+        raise ValueError("video_job_id is required")
+
     job_uuid = UUID(video_job_id)
 
     logger.info("render_final_video_started", task_id=task_id, video_job_id=video_job_id)
@@ -572,8 +579,8 @@ def render_final_video_task(
 )
 def mark_ready_to_publish_task(
     self: Any,
-    video_job_id: str,
-    render_result: dict[str, Any] | None = None,
+    render_result: dict[str, Any] | None = None,  # First - receives chain result
+    video_job_id: str | None = None,  # Second - passed as kwarg
 ) -> dict[str, Any]:
     """Mark a video job as ready to publish.
 
@@ -581,13 +588,20 @@ def mark_ready_to_publish_task(
     Unlike planning QA, render QA failures do not retry (too expensive).
 
     Args:
+        render_result: Optional result from render stage (or chain result)
         video_job_id: UUID of the video job
-        render_result: Optional result from render stage
 
     Returns:
         Dict with final status and MP4 URL
     """
     task_id = self.request.id
+
+    # Extract video_job_id from chain result if not passed directly
+    if video_job_id is None and render_result:
+        video_job_id = render_result.get("video_job_id")
+    if not video_job_id:
+        raise ValueError("video_job_id is required")
+
     job_uuid = UUID(video_job_id)
     start_time = datetime.now(UTC)
 

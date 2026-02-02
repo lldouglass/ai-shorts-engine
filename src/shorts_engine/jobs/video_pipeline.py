@@ -18,7 +18,7 @@ from pathlib import Path
 from typing import Any
 from uuid import UUID, uuid4
 
-from celery import chain, group
+from celery import chain
 from sqlalchemy import select
 
 from shorts_engine.adapters.video_gen.base import VideoGenProvider, VideoGenRequest
@@ -615,17 +615,35 @@ def generate_all_scenes_task(
                 "error": f"Ralph loop failed: {str(e)}",
             }
 
-    # Standard generation (no Ralph loop)
-    generation_tasks = group(
-        generate_scene_clip_task.s(scene_id, video_job_id) for scene_id in scene_ids
+    # Standard generation (no Ralph loop) - staggered to avoid rate limits
+    rate_limit_seconds = settings.video_gen_rate_limit_seconds
+
+    logger.info(
+        "generate_all_scenes_staggered_dispatch",
+        video_job_id=video_job_id,
+        scene_count=len(scene_ids),
+        rate_limit_seconds=rate_limit_seconds,
     )
 
-    # Execute and wait for all
-    result = generation_tasks.apply_async()
+    # Dispatch tasks with staggered countdown delays
+    async_results = []
+    for i, scene_id in enumerate(scene_ids):
+        countdown = i * rate_limit_seconds  # 0, 6, 12, 18, ... seconds
+        result = generate_scene_clip_task.apply_async(
+            args=[scene_id, video_job_id],
+            countdown=countdown,
+        )
+        async_results.append(result)
 
-    # Wait for completion (with timeout)
+    # Wait for all tasks to complete (with timeout)
     try:
-        results = result.get(timeout=3600)  # 1 hour max
+        results = []
+        # Total timeout: base 1 hour + stagger time for all scenes
+        total_timeout = 3600 + (len(scene_ids) * rate_limit_seconds)
+
+        for async_result in async_results:
+            result = async_result.get(timeout=total_timeout)
+            results.append(result)
 
         success_count = sum(1 for r in results if r.get("success"))
         logger.info(

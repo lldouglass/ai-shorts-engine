@@ -156,3 +156,14 @@ After making changes:
 2. `make lint` - Check types and style
 3. `make test-fast` - Quick test run
 4. For pipeline changes: `make smoke` after `make up`
+
+## Before Starting Any Task
+
+  ALWAYS ask clarifying questions before writing code. Consider:
+  - What are the edge cases?
+  - What's the expected behavior on failure?
+  - Are there performance constraints?
+  - What's the scope boundary - what should this NOT do?
+  - Are there existing patterns in the codebase to follow?
+
+  Do not proceed until you've asked at least 3 relevant questions.

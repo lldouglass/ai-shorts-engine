@@ -62,6 +62,7 @@ services:
     command: celery -A shorts_engine.worker worker --loglevel=info -Q celery,default,high,low
     volumes:
       - ./src:/app/src:ro
+      - ./storage:/app/storage
     env_file:
       - .env
     environment:
