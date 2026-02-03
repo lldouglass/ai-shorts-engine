@@ -295,6 +295,49 @@ ATTACK_ON_TITAN = StylePreset(
     },
 )
 
+ANIME_REALISM = StylePreset(
+    name="ANIME_REALISM",
+    display_name="Anime Realism",
+    description="Anime style with realistic lighting, textures, and cinematic quality for sci-fi stories",
+    style_tokens=[
+        "anime style",
+        "realistic lighting",
+        "cinematic anime",
+        "detailed textures",
+        "volumetric lighting",
+        "atmospheric",
+        "high detail",
+        "sci-fi aesthetic",
+        "futuristic",
+        "photorealistic shading",
+        "dramatic composition",
+        "film grain",
+    ],
+    negative_tokens=[
+        "cartoon",
+        "chibi",
+        "low quality",
+        "blurry",
+        "oversaturated",
+        "flat colors",
+        "simple shading",
+    ],
+    continuity_tokens=[
+        "consistent character design",
+        "matching lighting direction",
+        "unified color grading",
+        "same art style throughout",
+    ],
+    aspect_ratio=AspectRatio.VERTICAL_9_16,
+    default_duration_per_scene=5.0,
+    color_palette=["#1a1a2e", "#4a5568", "#2d3748", "#00bcd4", "#ff6b6b"],
+    camera_style="cinematic pans, close-ups with depth of field, dramatic reveals",
+    generation_params={
+        "guidance_scale": 7.5,
+        "num_inference_steps": 50,
+    },
+)
+
 
 # =============================================================================
 # PRESET REGISTRY
@@ -306,6 +349,7 @@ PRESETS: dict[str, StylePreset] = {
     "CINEMATIC_REALISM": CINEMATIC_REALISM,
     "SURREAL_DREAMSCAPE": SURREAL_DREAMSCAPE,
     "ATTACK_ON_TITAN": ATTACK_ON_TITAN,
+    "ANIME_REALISM": ANIME_REALISM,
 }
 
 

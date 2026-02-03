@@ -65,6 +65,17 @@ class TestRenderPipelineHelpers:
             provider = get_renderer_provider()
             assert isinstance(provider, CreatomateProvider)
 
+    def test_get_renderer_provider_moviepy(self):
+        """Test that MoviePy provider is returned when configured."""
+        with patch("shorts_engine.jobs.render_pipeline.settings") as mock_settings:
+            mock_settings.renderer_provider = "moviepy"
+
+            from shorts_engine.adapters.renderer.moviepy_renderer import MoviePyRenderer
+            from shorts_engine.jobs.render_pipeline import get_renderer_provider
+
+            provider = get_renderer_provider()
+            assert isinstance(provider, MoviePyRenderer)
+
 
 class TestSceneClipConstruction:
     """Tests for building scene clips from database models."""

@@ -8,7 +8,7 @@ Ken Burns motion effects create the illusion of animation.
 from dataclasses import dataclass, field
 from typing import Any
 
-from shorts_engine.adapters.image_gen.base import MotionParams
+from shorts_engine.adapters.renderer.creatomate import MotionParams
 from shorts_engine.adapters.llm.base import LLMProvider
 from shorts_engine.adapters.llm.openai import OpenAIProvider
 from shorts_engine.adapters.llm.stub import StubLLMProvider
@@ -74,7 +74,7 @@ class ImageSequencePlanner:
             settings = get_settings()
             provider = getattr(settings, "llm_provider", "stub").lower()
             if provider == "openai":
-                self.llm = OpenAIProvider()
+                self.llm = OpenAIProvider(model=settings.openai_model)
             else:
                 self.llm = StubLLMProvider()
 
@@ -332,8 +332,8 @@ Apply these learnings to make the visuals more engaging.
         preset: StylePreset | None,
     ) -> MotionParams:
         """Get appropriate motion parameters for a shot type."""
-        # Start with preset defaults if available
-        base_motion = MotionParams.for_style(preset.name) if preset else MotionParams()
+        # Start with default motion params
+        base_motion = MotionParams()
 
         # Adjust based on shot type
         if shot_type == "close-up":

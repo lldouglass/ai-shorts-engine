@@ -104,6 +104,10 @@ class Settings(BaseSettings):
 
     # API Keys (optional, for real providers)
     openai_api_key: str | None = Field(default=None, description="OpenAI API key")
+    openai_model: str = Field(
+        default="gpt-4o-mini",
+        description="OpenAI model for LLM provider (gpt-4o-mini, gpt-4o, etc.)",
+    )
     anthropic_api_key: str | None = Field(default=None, description="Anthropic API key")
     luma_api_key: str | None = Field(default=None, description="Luma AI API key")
     google_api_key: str | None = Field(default=None, description="Google API key for Gemini/Veo")

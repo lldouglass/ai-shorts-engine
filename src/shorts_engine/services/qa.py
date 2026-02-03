@@ -125,7 +125,7 @@ Be thorough but efficient. This check is a final gate."""
     def _get_default_provider(self) -> LLMProvider:
         """Get the default LLM provider based on available API keys."""
         if settings.openai_api_key:
-            return OpenAIProvider()
+            return OpenAIProvider(model=settings.openai_model)
         if settings.anthropic_api_key:
             return AnthropicProvider()
         logger.warning("No LLM API keys configured, using stub provider for QA")

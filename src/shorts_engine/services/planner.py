@@ -99,7 +99,7 @@ Guidelines:
         """Get the default LLM provider based on available API keys."""
         # Check for API keys in order of preference
         if settings.openai_api_key:
-            return OpenAIProvider()
+            return OpenAIProvider(model=settings.openai_model)
         if hasattr(settings, "anthropic_api_key") and settings.anthropic_api_key:
             return AnthropicProvider()
 
@@ -107,7 +107,7 @@ Guidelines:
         if default == "anthropic":
             return AnthropicProvider()
         elif default == "openai":
-            return OpenAIProvider()
+            return OpenAIProvider(model=settings.openai_model)
         else:
             logger.warning("No LLM API keys configured, using stub provider")
             return StubLLMProvider()

@@ -39,7 +39,7 @@ def _get_llm_provider() -> Any:
     if settings.llm_provider == "openai":
         from shorts_engine.adapters.llm import OpenAIProvider
 
-        return OpenAIProvider()
+        return OpenAIProvider(model=settings.openai_model)
     elif settings.llm_provider == "anthropic":
         from shorts_engine.adapters.llm import AnthropicProvider
 

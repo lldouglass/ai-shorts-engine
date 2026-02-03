@@ -160,14 +160,14 @@ Guidelines:
     def _get_default_provider(self, default: str) -> LLMProvider:
         """Get the default LLM provider based on available API keys."""
         if settings.openai_api_key:
-            return OpenAIProvider()
+            return OpenAIProvider(model=settings.openai_model)
         if hasattr(settings, "anthropic_api_key") and settings.anthropic_api_key:
             return AnthropicProvider()
 
         if default == "anthropic":
             return AnthropicProvider()
         elif default == "openai":
-            return OpenAIProvider()
+            return OpenAIProvider(model=settings.openai_model)
         else:
             logger.warning("No LLM API keys configured, using stub provider")
             return StubLLMProvider()
