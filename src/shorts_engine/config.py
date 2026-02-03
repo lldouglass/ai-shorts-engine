@@ -58,7 +58,25 @@ class Settings(BaseSettings):
     )
     renderer_provider: str = Field(
         default="stub",
-        description="Rendering provider (stub, creatomate)",
+        description="Rendering provider (stub, creatomate, ffmpeg)",
+    )
+
+    # FFmpeg settings (for renderer_provider=ffmpeg)
+    ffmpeg_path: str | None = Field(
+        default=None,
+        description="Path to FFmpeg binary (uses 'ffmpeg' from PATH if not specified)",
+    )
+    ffmpeg_preset: str = Field(
+        default="medium",
+        description="FFmpeg encoding preset (ultrafast, fast, medium, slow, veryslow)",
+    )
+    ffmpeg_crf: int = Field(
+        default=23,
+        description="FFmpeg CRF quality (0-51, lower = better quality, 23 is default)",
+    )
+    ffmpeg_timeout: int = Field(
+        default=600,
+        description="FFmpeg render timeout in seconds (default 10 minutes)",
     )
     voiceover_provider: str = Field(
         default="stub",
@@ -250,6 +268,20 @@ class Settings(BaseSettings):
     video_gen_rate_limit_seconds: int = Field(
         default=15,
         description="Seconds between video generation requests to avoid API rate limits",
+    )
+
+    # Story Generation
+    story_target_words: int = Field(
+        default=125,
+        description="Target word count for generated stories",
+    )
+    story_max_words: int = Field(
+        default=160,
+        description="Maximum word count for generated stories",
+    )
+    story_narration_wpm: int = Field(
+        default=150,
+        description="Words per minute for estimating story narration duration",
     )
 
     # Ralph Loop (Agentic Retry for Video Generation)

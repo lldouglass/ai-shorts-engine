@@ -18,8 +18,8 @@ class StubLLMProvider(LLMProvider):
     async def complete(
         self,
         messages: list[LLMMessage],
-        _temperature: float = 0.7,
-        _max_tokens: int = 4096,
+        temperature: float = 0.7,  # noqa: ARG002
+        max_tokens: int = 4096,  # noqa: ARG002
         json_mode: bool = False,
     ) -> LLMResponse:
         """Return a mock completion response."""
@@ -37,34 +37,64 @@ class StubLLMProvider(LLMProvider):
                 break
 
         if json_mode:
-            # Return a mock video plan JSON
-            content = json.dumps(
-                {
-                    "title": f"Epic Short: {user_message[:30]}...",
-                    "description": f"A captivating short video about {user_message[:50]}. "
-                    "This video takes viewers on an unforgettable visual journey.",
-                    "scenes": [
-                        {
-                            "scene_number": i + 1,
-                            "visual_prompt": f"Scene {i + 1}: {['Opening shot establishing mood', 'Character introduction with dramatic lighting', 'Action sequence with dynamic camera movement', 'Emotional close-up moment', 'Plot twist reveal', 'Climactic confrontation', 'Resolution and reflection', 'Final powerful image'][i % 8]}",
-                            "continuity_notes": "Maintain consistent character design, lighting direction from left, color palette with deep shadows",
-                            "caption_beat": [
-                                "The beginning",
-                                "Enter the hero",
-                                "Chaos unfolds",
-                                "A moment of truth",
-                                "Everything changes",
-                                "The final stand",
-                                "Peace returns",
-                                "Remember this",
-                            ][i % 8],
-                            "duration_seconds": 5.0 + (i % 3),
-                        }
-                        for i in range(7)
-                    ],
-                },
-                indent=2,
+            # Detect if this is a story generation request
+            is_story_request = any(
+                keyword in user_message.lower()
+                for keyword in ["create a short story", "topic:", "100-150 words"]
             )
+
+            if is_story_request:
+                # Return a mock story JSON
+                content = json.dumps(
+                    {
+                        "title": "The Morning After",
+                        "narrative_text": (
+                            "I woke to Aria's soft hum, her holographic form already preparing "
+                            "my coffee. Three years since the Integration, and I still caught "
+                            "myself reaching for my phone—a habit from another lifetime.\n\n"
+                            '"You seem troubled," she observed, particles shifting to mirror concern.\n\n'
+                            '"Just remembering," I said. "When we had to type everything."\n\n'
+                            "She laughed, a sound indistinguishable from human. "
+                            '"You miss the inefficiency?"\n\n'
+                            "I didn't. But I missed the choice. Now every thought could be heard, "
+                            "every need anticipated. Aria knew my answer before I spoke it.\n\n"
+                            '"The coffee\'s perfect," I said anyway.\n\n'
+                            'She smiled. "I know."'
+                        ),
+                        "narrative_style": "first-person",
+                        "suggested_preset": "DARK_DYSTOPIAN_ANIME",
+                    },
+                    indent=2,
+                )
+            else:
+                # Return a mock video plan JSON
+                content = json.dumps(
+                    {
+                        "title": f"Epic Short: {user_message[:30]}...",
+                        "description": f"A captivating short video about {user_message[:50]}. "
+                        "This video takes viewers on an unforgettable visual journey.",
+                        "scenes": [
+                            {
+                                "scene_number": i + 1,
+                                "visual_prompt": f"Scene {i + 1}: {['Opening shot establishing mood', 'Character introduction with dramatic lighting', 'Action sequence with dynamic camera movement', 'Emotional close-up moment', 'Plot twist reveal', 'Climactic confrontation', 'Resolution and reflection', 'Final powerful image'][i % 8]}",
+                                "continuity_notes": "Maintain consistent character design, lighting direction from left, color palette with deep shadows",
+                                "caption_beat": [
+                                    "The beginning",
+                                    "Enter the hero",
+                                    "Chaos unfolds",
+                                    "A moment of truth",
+                                    "Everything changes",
+                                    "The final stand",
+                                    "Peace returns",
+                                    "Remember this",
+                                ][i % 8],
+                                "duration_seconds": 5.0 + (i % 3),
+                            }
+                            for i in range(7)
+                        ],
+                    },
+                    indent=2,
+                )
         else:
             content = f"This is a stub response for: {user_message[:100]}"
 
