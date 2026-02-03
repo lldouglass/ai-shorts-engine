@@ -32,6 +32,37 @@ class Base(DeclarativeBase):
 # =============================================================================
 
 
+class StoryModel(Base):
+    """Story for video generation ORM model."""
+
+    __tablename__ = "stories"
+
+    id: Mapped[PyUUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid4)
+    project_id: Mapped[PyUUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("projects.id", ondelete="CASCADE"), index=True
+    )
+    topic: Mapped[str] = mapped_column(Text, nullable=False)
+    title: Mapped[str] = mapped_column(String(255), nullable=False)
+    narrative_text: Mapped[str] = mapped_column(Text, nullable=False)
+    narrative_style: Mapped[str] = mapped_column(
+        String(50), nullable=False
+    )  # first-person, third-person, documentary
+    suggested_preset: Mapped[str] = mapped_column(String(100), nullable=False)
+    word_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    estimated_duration_seconds: Mapped[float] = mapped_column(Float, nullable=False)
+    status: Mapped[str] = mapped_column(
+        String(50), server_default="draft", index=True
+    )  # draft, approved, used
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    approved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    # Relationships
+    project: Mapped["ProjectModel"] = relationship("ProjectModel", back_populates="stories")
+    video_jobs: Mapped[list["VideoJobModel"]] = relationship(
+        "VideoJobModel", back_populates="story"
+    )
+
+
 class ProjectModel(Base):
     """Project (content brand / channel) ORM model."""
 
@@ -51,6 +82,9 @@ class ProjectModel(Base):
     # Relationships
     video_jobs: Mapped[list["VideoJobModel"]] = relationship(
         "VideoJobModel", back_populates="project", cascade="all, delete-orphan"
+    )
+    stories: Mapped[list["StoryModel"]] = relationship(
+        "StoryModel", back_populates="project", cascade="all, delete-orphan"
     )
 
 
@@ -81,6 +115,11 @@ class VideoJobModel(Base):
     updated_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), onupdate=func.now()
     )
+    # Story relationship
+    story_id: Mapped[PyUUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("stories.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+
     # Learning loop fields
     recipe_id: Mapped[PyUUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("recipes.id", ondelete="SET NULL"), nullable=True
@@ -108,6 +147,7 @@ class VideoJobModel(Base):
 
     # Relationships
     project: Mapped["ProjectModel"] = relationship("ProjectModel", back_populates="video_jobs")
+    story: Mapped["StoryModel | None"] = relationship("StoryModel", back_populates="video_jobs")
     scenes: Mapped[list["SceneModel"]] = relationship(
         "SceneModel", back_populates="video_job", cascade="all, delete-orphan"
     )

@@ -26,11 +26,13 @@ projects_app = typer.Typer(help="Project management commands")
 accounts_app = typer.Typer(help="Platform account management commands")
 ingest_app = typer.Typer(help="Analytics and comments ingestion commands")
 learning_app = typer.Typer(help="Learning loop commands")
+story_app = typer.Typer(help="Story generation commands")
 app.add_typer(shorts_app, name="shorts")
 app.add_typer(projects_app, name="projects")
 app.add_typer(accounts_app, name="accounts")
 app.add_typer(ingest_app, name="ingest")
 app.add_typer(learning_app, name="learn")
+app.add_typer(story_app, name="story")
 
 console = Console()
 
@@ -1901,6 +1903,369 @@ def update_recipe_stats(
 
         console.print("[green]Stats update complete![/green]")
         console.print(f"[cyan]Recipes updated:[/cyan] {recipes_updated}")
+
+
+# =============================================================================
+# STORY COMMANDS
+# =============================================================================
+
+
+def _display_story(
+    title: str,
+    narrative_style: str,
+    word_count: int,
+    duration: float,
+    suggested_preset: str,
+    narrative_text: str,
+) -> None:
+    """Display a generated story in a rich panel."""
+    console.print(
+        Panel.fit(
+            f"[bold cyan]Title:[/bold cyan] {title}\n"
+            f"[bold cyan]Style:[/bold cyan] {narrative_style.replace('-', ' ').title()}\n"
+            f"[bold cyan]Words:[/bold cyan] {word_count} | "
+            f"[bold cyan]Duration:[/bold cyan] ~{int(duration)} seconds\n"
+            f"[bold cyan]Suggested Preset:[/bold cyan] {suggested_preset}",
+            title="Generated Story",
+            border_style="blue",
+        )
+    )
+    console.print()
+    console.print(Panel(narrative_text, border_style="dim"))
+    console.print()
+
+
+def _prompt_story_action() -> str:
+    """Prompt user for story action: approve, regenerate, or quit."""
+    console.print("[bold][a]pprove[/bold]  [bold][r]egenerate[/bold]  [bold][q]uit[/bold]")
+    while True:
+        action = console.input("[dim]Choice: [/dim]").strip().lower()
+        if action in ("a", "approve"):
+            return "approve"
+        elif action in ("r", "regenerate"):
+            return "regenerate"
+        elif action in ("q", "quit"):
+            return "quit"
+        else:
+            console.print("[yellow]Please enter 'a', 'r', or 'q'[/yellow]")
+
+
+@story_app.command("generate")
+def story_generate(
+    topic: str = typer.Option(..., "--topic", "-t", help="Story topic"),
+    style: str | None = typer.Option(None, "--style", "-s", help="Style preset override"),
+    project: str | None = typer.Option(None, "--project", "-p", help="Project ID"),
+    yes: bool = typer.Option(False, "--yes", "-y", help="Auto-approve without review"),
+) -> None:
+    """Generate a story and optionally create a video from it.
+
+    Creates an AI-future fantasy narrative from a topic. The story goes through
+    an interactive review process where you can approve it, regenerate with
+    modifications, or quit.
+
+    On approval, the story is saved and a video pipeline job is created.
+
+    Example:
+        shorts-engine story generate --topic "AI companions in 2050"
+        shorts-engine story generate --topic "Robot artists" --project <uuid> --yes
+    """
+    import asyncio
+    from uuid import uuid4
+
+    from shorts_engine.db.models import ProjectModel, StoryModel, VideoJobModel
+    from shorts_engine.db.session import get_session_context
+    from shorts_engine.presets.styles import get_preset, get_preset_names
+    from shorts_engine.services.story_generator import StoryGenerator
+
+    # Validate project if provided
+    project_uuid = None
+    project_name = None
+    if project:
+        try:
+            project_uuid = UUID(project)
+        except ValueError:
+            console.print(f"[bold red]Invalid project ID: {project}[/bold red]")
+            raise typer.Exit(code=1)
+
+        with get_session_context() as session:
+            project_record = session.get(ProjectModel, project_uuid)
+            if not project_record:
+                console.print(f"[bold red]Project not found: {project}[/bold red]")
+                console.print("[dim]Use 'shorts-engine projects list' to see available projects[/dim]")
+                raise typer.Exit(code=1)
+            project_name = project_record.name
+
+    # Validate style override if provided
+    if style:
+        style = style.upper()
+        if not get_preset(style):
+            available = ", ".join(get_preset_names())
+            console.print(f"[bold red]Unknown preset: {style}[/bold red]")
+            console.print(f"[dim]Available presets: {available}[/dim]")
+            raise typer.Exit(code=1)
+
+    console.print(
+        Panel.fit(
+            f"[bold]Generating Story[/bold]\n\n"
+            f"[cyan]Topic:[/cyan] {topic}\n"
+            f"[cyan]Project:[/cyan] {project_name or 'None (will prompt later)'}\n"
+            f"[cyan]Style Override:[/cyan] {style or 'None (use suggested)'}",
+            title="Story Generator",
+            border_style="blue",
+        )
+    )
+
+    generator = StoryGenerator()
+    current_topic = topic
+
+    while True:
+        console.print("\n[dim]Generating story...[/dim]")
+        try:
+            story = asyncio.run(generator.generate(current_topic))
+        except Exception as e:
+            console.print(f"[bold red]Generation failed: {e}[/bold red]")
+            raise typer.Exit(code=1)
+
+        _display_story(
+            title=story.title,
+            narrative_style=story.narrative_style,
+            word_count=story.word_count,
+            duration=story.estimated_duration_seconds,
+            suggested_preset=story.suggested_preset,
+            narrative_text=story.narrative_text,
+        )
+
+        action = "approve" if yes else _prompt_story_action()
+
+        if action == "quit":
+            console.print("[dim]Cancelled[/dim]")
+            raise typer.Exit()
+
+        elif action == "regenerate":
+            console.print(f"\n[dim]Current topic: \"{current_topic}\"[/dim]")
+            new_topic = console.input("[dim]New topic (or Enter to keep): [/dim]").strip()
+            if new_topic:
+                current_topic = new_topic
+            console.print("[dim]Regenerating...[/dim]")
+            continue
+
+        elif action == "approve":
+            # Use style override or suggested preset
+            final_preset = style or story.suggested_preset
+
+            # If no project provided, prompt for one or create a story without triggering pipeline
+            if not project_uuid:
+                console.print("\n[yellow]No project specified.[/yellow]")
+                console.print("[dim]A project is required to create a video job.[/dim]")
+
+                # List available projects
+                with get_session_context() as session:
+                    from sqlalchemy import select
+
+                    projects = (
+                        session.execute(
+                            select(ProjectModel)
+                            .where(ProjectModel.is_active == True)  # noqa: E712
+                            .order_by(ProjectModel.created_at.desc())
+                            .limit(5)
+                        )
+                        .scalars()
+                        .all()
+                    )
+
+                    if projects:
+                        console.print("\n[bold]Available projects:[/bold]")
+                        for i, p in enumerate(projects, 1):
+                            console.print(f"  {i}. {p.name} ({str(p.id)[:8]}...)")
+
+                        console.print("\n[dim]Enter project number, ID, or 'skip' to save story only:[/dim]")
+                        choice = console.input("[dim]Project: [/dim]").strip()
+
+                        if choice.lower() == "skip":
+                            project_uuid = None
+                        elif choice.isdigit() and 1 <= int(choice) <= len(projects):
+                            project_uuid = projects[int(choice) - 1].id
+                            project_name = projects[int(choice) - 1].name
+                        else:
+                            try:
+                                project_uuid = UUID(choice)
+                            except ValueError:
+                                console.print("[bold red]Invalid choice. Saving story without video job.[/bold red]")
+                                project_uuid = None
+                    else:
+                        console.print("[dim]No projects found. Create one with 'shorts-engine projects create'[/dim]")
+                        console.print("[dim]Story will be saved without creating a video job.[/dim]")
+
+            # Save story to database
+            with get_session_context() as session:
+                # Need a project_id for the story - use selected or fail
+                if not project_uuid:
+                    console.print("[bold red]Cannot save story without a project.[/bold red]")
+                    console.print("[dim]Create a project first with: shorts-engine projects create --name 'My Project'[/dim]")
+                    raise typer.Exit(code=1)
+
+                from datetime import datetime as dt
+
+                story_model = StoryModel(
+                    id=uuid4(),
+                    project_id=project_uuid,
+                    topic=current_topic,
+                    title=story.title,
+                    narrative_text=story.narrative_text,
+                    narrative_style=story.narrative_style,
+                    suggested_preset=story.suggested_preset,
+                    word_count=story.word_count,
+                    estimated_duration_seconds=story.estimated_duration_seconds,
+                    status="approved",
+                    approved_at=dt.now(UTC),
+                )
+                session.add(story_model)
+                session.flush()  # Get the ID
+
+                story_id = story_model.id
+
+                console.print(f"\n[green]Story saved (ID: {str(story_id)[:8]}...)[/green]")
+
+                # Create video job
+                from shorts_engine.jobs.video_pipeline import generate_idempotency_key
+
+                idempotency_key = generate_idempotency_key(
+                    str(project_uuid),
+                    story.narrative_text,  # Use full narrative as the idea
+                    final_preset,
+                )
+
+                video_job = VideoJobModel(
+                    id=uuid4(),
+                    project_id=project_uuid,
+                    story_id=story_id,
+                    idempotency_key=idempotency_key,
+                    idea=story.narrative_text,  # Full story becomes the idea
+                    style_preset=final_preset,
+                    title=story.title,
+                    status="pending",
+                    stage="created",
+                )
+                session.add(video_job)
+                session.commit()
+
+                console.print(f"[green]Video job created (ID: {str(video_job.id)[:8]}...)[/green]")
+
+                # Trigger the pipeline
+                from shorts_engine.jobs.video_pipeline import run_full_pipeline_task
+
+                result = run_full_pipeline_task.delay(
+                    project_id=str(project_uuid),
+                    idea=story.narrative_text,
+                    style_preset=final_preset,
+                    idempotency_key=idempotency_key,
+                )
+
+                console.print(f"[green]Pipeline started (Task ID: {result.id})[/green]")
+
+                console.print("\n[bold]Next steps:[/bold]")
+                console.print(f"  Track progress: shorts-engine shorts status {result.id}")
+                console.print(f"  View job: shorts-engine shorts job {video_job.id}")
+
+            break
+
+
+@story_app.command("list")
+def story_list(
+    project: str | None = typer.Option(None, "--project", "-p", help="Filter by project ID"),
+    status: str | None = typer.Option(None, "--status", "-s", help="Filter by status (draft, approved, used)"),
+    limit: int = typer.Option(20, "--limit", "-n", help="Number of stories to show"),
+) -> None:
+    """List stories."""
+    from sqlalchemy import select
+
+    from shorts_engine.db.models import StoryModel
+    from shorts_engine.db.session import get_session_context
+
+    with get_session_context() as session:
+        query = select(StoryModel).order_by(StoryModel.created_at.desc()).limit(limit)
+
+        if project:
+            try:
+                project_uuid = UUID(project)
+                query = query.where(StoryModel.project_id == project_uuid)
+            except ValueError:
+                console.print(f"[bold red]Invalid project ID: {project}[/bold red]")
+                raise typer.Exit(code=1)
+
+        if status:
+            query = query.where(StoryModel.status == status)
+
+        stories = session.execute(query).scalars().all()
+
+        if not stories:
+            console.print("[dim]No stories found[/dim]")
+            return
+
+        table = Table(title="Stories")
+        table.add_column("ID", style="dim", no_wrap=True)
+        table.add_column("Title", style="cyan")
+        table.add_column("Style")
+        table.add_column("Words")
+        table.add_column("Preset")
+        table.add_column("Status", style="green")
+        table.add_column("Created")
+
+        for s in stories:
+            table.add_row(
+                str(s.id)[:8] + "...",
+                (s.title or "Untitled")[:25],
+                s.narrative_style[:12],
+                str(s.word_count),
+                s.suggested_preset[:15],
+                s.status,
+                s.created_at.strftime("%Y-%m-%d %H:%M") if s.created_at else "-",
+            )
+
+        console.print(table)
+
+
+@story_app.command("show")
+def story_show(
+    story_id: str = typer.Argument(..., help="Story ID (UUID)"),
+) -> None:
+    """Show a story's full details."""
+    from shorts_engine.db.models import StoryModel
+    from shorts_engine.db.session import get_session_context
+
+    try:
+        story_uuid = UUID(story_id)
+    except ValueError:
+        console.print(f"[bold red]Invalid story ID: {story_id}[/bold red]")
+        raise typer.Exit(code=1)
+
+    with get_session_context() as session:
+        story = session.get(StoryModel, story_uuid)
+        if not story:
+            console.print(f"[bold red]Story not found: {story_id}[/bold red]")
+            raise typer.Exit(code=1)
+
+        _display_story(
+            title=story.title,
+            narrative_style=story.narrative_style,
+            word_count=story.word_count,
+            duration=story.estimated_duration_seconds,
+            suggested_preset=story.suggested_preset,
+            narrative_text=story.narrative_text,
+        )
+
+        console.print(f"[cyan]ID:[/cyan] {story.id}")
+        console.print(f"[cyan]Topic:[/cyan] {story.topic}")
+        console.print(f"[cyan]Status:[/cyan] {story.status}")
+        console.print(f"[cyan]Created:[/cyan] {story.created_at}")
+        if story.approved_at:
+            console.print(f"[cyan]Approved:[/cyan] {story.approved_at}")
+
+        # Show linked video jobs
+        if story.video_jobs:
+            console.print(f"\n[bold]Linked Video Jobs ({len(story.video_jobs)}):[/bold]")
+            for job in story.video_jobs[:5]:
+                console.print(f"  - {str(job.id)[:8]}... [{job.status}/{job.stage}]")
 
 
 if __name__ == "__main__":

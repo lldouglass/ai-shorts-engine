@@ -113,9 +113,20 @@ Guidelines:
             return StubLLMProvider()
 
     def _build_user_prompt(
-        self, idea: str, preset: StylePreset, optimization_context: str | None = None
+        self,
+        idea: str,
+        preset: StylePreset,
+        optimization_context: str | None = None,
+        story_context: dict[str, str] | None = None,
     ) -> str:
-        """Build the user prompt with idea and style context."""
+        """Build the user prompt with idea and style context.
+
+        Args:
+            idea: The video idea (may be full story narrative)
+            preset: Style preset for visual guidance
+            optimization_context: Optional learnings from past performance
+            story_context: Optional dict with 'narrative_style' and 'topic' for richer context
+        """
         optimization_section = ""
         if optimization_context:
             optimization_section = f"""
@@ -124,9 +135,24 @@ Guidelines:
 Use these learnings to inform your creative choices. Patterns that work should be incorporated; patterns to avoid should be steered away from.
 
 """
+
+        story_section = ""
+        if story_context:
+            narrative_style = story_context.get("narrative_style", "")
+            topic = story_context.get("topic", "")
+            if narrative_style or topic:
+                story_section = """
+## Story Context
+This video is based on a pre-written story. Preserve the narrative arc and emotional beats.
+"""
+                if topic:
+                    story_section += f"Original Topic: {topic}\n"
+                if narrative_style:
+                    story_section += f"Narrative Style: {narrative_style} (maintain this perspective in captions)\n"
+
         return f"""Create a video plan for the following concept:
 {optimization_section}
-
+{story_section}
 ## Video Idea
 {idea}
 
@@ -155,13 +181,15 @@ Generate a compelling 7-8 scene video plan that brings this idea to life in the 
         idea: str,
         style_preset_name: str,
         optimization_context: str | None = None,
+        story_context: dict[str, str] | None = None,
     ) -> VideoPlan:
         """Generate a video plan from an idea and style preset.
 
         Args:
-            idea: One-paragraph description of the video concept
+            idea: One-paragraph description of the video concept (or full story narrative)
             style_preset_name: Name of the style preset to use
             optimization_context: Optional formatted string with learnings from past performance
+            story_context: Optional dict with 'narrative_style' and 'topic' from Story
 
         Returns:
             VideoPlan with title, description, and scenes
@@ -185,6 +213,7 @@ Generate a compelling 7-8 scene video plan that brings this idea to life in the 
             style_preset=preset.name,
             llm_provider=self.llm.name,
             has_optimization_context=optimization_context is not None,
+            has_story_context=story_context is not None,
         )
 
         # Build messages
@@ -192,7 +221,7 @@ Generate a compelling 7-8 scene video plan that brings this idea to life in the 
             LLMMessage(role="system", content=self.SYSTEM_PROMPT),
             LLMMessage(
                 role="user",
-                content=self._build_user_prompt(idea, preset, optimization_context),
+                content=self._build_user_prompt(idea, preset, optimization_context, story_context),
             ),
         ]
 

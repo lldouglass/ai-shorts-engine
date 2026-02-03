@@ -168,9 +168,25 @@ def plan_job_task(
                     error=str(e),
                 )
 
+            # Build story context if job has a linked story
+            story_context = None
+            if job.story_id and job.story:
+                story_context = {
+                    "narrative_style": job.story.narrative_style,
+                    "topic": job.story.topic,
+                }
+                logger.info(
+                    "story_context_loaded",
+                    video_job_id=video_job_id,
+                    story_id=str(job.story_id),
+                    narrative_style=job.story.narrative_style,
+                )
+
             # Run planner
             planner = PlannerService()
-            plan = run_async(planner.plan(job.idea, job.style_preset, optimization_context))
+            plan = run_async(
+                planner.plan(job.idea, job.style_preset, optimization_context, story_context)
+            )
 
             # Update job with plan
             job.title = plan.title
