@@ -14,6 +14,7 @@ from shorts_engine.adapters.renderer.creatomate import (
     SceneClip,
     build_creatomate_payload,
 )
+from shorts_engine.adapters.renderer.moviepy_renderer import MoviePyRenderer
 from shorts_engine.adapters.renderer.stub import StubRendererProvider
 
 __all__ = [
@@ -25,6 +26,7 @@ __all__ = [
     "ImageCompositionRequest",
     "ImageSceneClip",
     "MotionParams",
+    "MoviePyRenderer",
     "SceneClip",
     "StubRendererProvider",
     "build_creatomate_payload",

@@ -90,9 +90,14 @@ class PipelineService:
 
         if provider_name == "stub":
             return StubRendererProvider()
-        # Add other providers here
-        # elif provider_name == "ffmpeg":
-        #     return FFmpegRenderer()
+        elif provider_name == "moviepy":
+            from shorts_engine.adapters.renderer.moviepy_renderer import MoviePyRenderer
+
+            return MoviePyRenderer()
+        elif provider_name == "creatomate":
+            from shorts_engine.adapters.renderer.creatomate import CreatomateProvider
+
+            return CreatomateProvider()
 
         logger.warning(f"Unknown renderer_provider '{provider_name}', using stub")
         return StubRendererProvider()

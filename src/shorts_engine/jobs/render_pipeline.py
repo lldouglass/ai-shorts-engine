@@ -72,6 +72,10 @@ def get_renderer_provider() -> RendererProvider:
 
     if provider == "creatomate":
         return CreatomateProvider()
+    elif provider == "moviepy":
+        from shorts_engine.adapters.renderer.moviepy_renderer import MoviePyRenderer
+
+        return MoviePyRenderer()
     else:
         return StubRendererProvider()
 
@@ -445,9 +449,11 @@ def render_final_video_task(
                 voiceover_url = voiceover_asset.url or f"file://{voiceover_asset.file_path}"
 
         try:
+            from shorts_engine.adapters.renderer.moviepy_renderer import MoviePyRenderer
+
             provider = get_renderer_provider()
 
-            if isinstance(provider, CreatomateProvider):
+            if isinstance(provider, (CreatomateProvider, MoviePyRenderer)):
                 if is_image_mode:
                     # Use image composition with Ken Burns effects
                     logger.info(
