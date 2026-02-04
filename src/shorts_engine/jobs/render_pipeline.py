@@ -139,32 +139,48 @@ def generate_voiceover_task(
                 "skipped": True,
             }
 
-        # Build narration script from caption beats if not provided
+        # Build narration script - prefer story narrative over caption beats
         if not narration_script:
-            scenes = (
-                session.execute(
-                    select(SceneModel)
-                    .where(SceneModel.video_job_id == job_uuid)
-                    .order_by(SceneModel.scene_number)
+            # Check if job has a linked story with narrative text
+            if job.story_id and job.story and job.story.narrative_text:
+                narration_script = job.story.narrative_text
+                logger.info(
+                    "using_story_narrative",
+                    video_job_id=video_job_id,
+                    story_id=str(job.story_id),
+                    word_count=job.story.word_count,
                 )
-                .scalars()
-                .all()
-            )
+            else:
+                # Fallback to caption beats (legacy behavior)
+                scenes = (
+                    session.execute(
+                        select(SceneModel)
+                        .where(SceneModel.video_job_id == job_uuid)
+                        .order_by(SceneModel.scene_number)
+                    )
+                    .scalars()
+                    .all()
+                )
 
-            if not scenes:
-                return {
-                    "success": False,
-                    "video_job_id": video_job_id,
-                    "error": "No scenes found for voiceover generation",
-                }
+                if not scenes:
+                    return {
+                        "success": False,
+                        "video_job_id": video_job_id,
+                        "error": "No scenes found for voiceover generation",
+                    }
 
-            # Combine caption beats into narration
-            narration_parts = []
-            for scene in scenes:
-                if scene.caption_beat:
-                    narration_parts.append(scene.caption_beat)
+                # Combine caption beats into narration (legacy fallback)
+                narration_parts = []
+                for scene in scenes:
+                    if scene.caption_beat:
+                        narration_parts.append(scene.caption_beat)
 
-            narration_script = ". ".join(narration_parts)
+                narration_script = ". ".join(narration_parts)
+                logger.warning(
+                    "using_caption_beats_fallback",
+                    video_job_id=video_job_id,
+                    word_count=len(narration_script.split()),
+                )
 
         if not narration_script.strip():
             logger.info("generate_voiceover_no_content", video_job_id=video_job_id)
@@ -179,9 +195,11 @@ def generate_voiceover_task(
             from shorts_engine.adapters.voiceover.base import VoiceoverRequest
 
             provider = get_voiceover_provider()
+            # Use configured default voice (defaults to "thriller" for dark content)
+            effective_voice_id = voice_id or settings.voiceover_default_voice
             request = VoiceoverRequest(
                 text=narration_script,
-                voice_id=voice_id or "narrator",
+                voice_id=effective_voice_id,
             )
 
             result = run_async(provider.generate(request))

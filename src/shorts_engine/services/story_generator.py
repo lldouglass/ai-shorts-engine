@@ -20,7 +20,7 @@ class Story:
     title: str
     narrative_text: str
     topic: str
-    narrative_style: str  # first-person, third-person, documentary
+    narrative_style: str  # second-person, third-person
     suggested_preset: str
     word_count: int
     estimated_duration_seconds: float
@@ -33,35 +33,44 @@ class StoryGenerator:
     into engaging short-form video content.
     """
 
-    SYSTEM_PROMPT = """You are a creative writer specializing in near-future AI fiction.
-Your stories explore life after AI advancement from the perspective of people living in that world.
+    SYSTEM_PROMPT = """You are a thriller writer creating dark, suspenseful near-future AI stories.
+Your stories are unsettling, mysterious, and leave viewers thinking. Think Black Mirror meets Twilight Zone.
 
-Requirements for every story:
-1. Length: 100-150 words (under 60 seconds when narrated)
-2. Visual storytelling: Describe scenes that can be animated/filmed
-3. Include 2-3 distinct "moments" that could become video scenes
-4. Start with an emotional hook in the first sentence
-5. End with a thought-provoking beat (not necessarily a resolution)
-6. Feel authentic - like a real person's experience in an AI world
+RULES:
+1. Length: 100-150 words (40-60 seconds when narrated at natural pace)
+2. ONE PROTAGONIST - an everyday person (use a common first name only, no last names)
+3. Build tension and dread - something is WRONG and getting worse
+4. The AI or technology should feel threatening, invasive, or too knowing
+5. End with a gut-punch twist or unsettling realization - NOT a happy ending
+6. Make it VISUAL - describe what we SEE, not just what characters think
+7. Present tense, second or third person for immediacy
 
-Choose the narrative style that best fits the topic:
-- first-person: Personal, intimate stories ("I woke up to...")
-- third-person: Character-focused narratives ("Sarah discovered...")
-- documentary: World-building, explanatory ("In 2050, humanity...")
+TONE: Paranoid. Claustrophobic. The technology that was supposed to help is now watching,
+controlling, or replacing something human.
+
+AVOID:
+- Sappy emotional moments or heartwarming endings
+- Happy resolutions where the AI turns out to be helpful
+- Multiple characters or jumping between perspectives
+- Generic "AI companion becomes my friend" stories
+- Anything that feels safe, predictable, or comforting
+- First-person narration (use second or third person for distance)
+
+The best stories make viewers uncomfortable. They should want to put down their phone
+after watching - but they can't look away.
 
 Return valid JSON with this exact structure:
 {
     "title": "Short, evocative title (max 60 characters)",
     "narrative_text": "The full story text (100-150 words)",
-    "narrative_style": "first-person|third-person|documentary",
-    "suggested_preset": "DARK_DYSTOPIAN_ANIME|CINEMATIC_REALISM|VIBRANT_MOTION_GRAPHICS|SURREAL_DREAMSCAPE"
+    "narrative_style": "second-person|third-person",
+    "suggested_preset": "DARK_DYSTOPIAN_ANIME|CINEMATIC_REALISM|SURREAL_DREAMSCAPE"
 }
 
 Style preset guidance:
-- DARK_DYSTOPIAN_ANIME: Moody, neon-lit, cyberpunk aesthetics
-- CINEMATIC_REALISM: Grounded, film-quality, emotional depth
-- VIBRANT_MOTION_GRAPHICS: Bold colors, dynamic, energetic
-- SURREAL_DREAMSCAPE: Abstract, ethereal, dreamlike imagery"""
+- DARK_DYSTOPIAN_ANIME: Moody, neon-lit, cyberpunk, surveillance aesthetics (PREFERRED)
+- CINEMATIC_REALISM: Grounded horror, film-quality, domestic unease
+- SURREAL_DREAMSCAPE: Nightmarish, abstract, reality-bending imagery"""
 
     def __init__(
         self,
@@ -97,16 +106,18 @@ Style preset guidance:
 
     def _build_user_prompt(self, topic: str) -> str:
         """Build the user prompt for story generation."""
-        return f"""Create a short story about the following topic:
+        return f"""Create a dark, suspenseful short story about the following topic:
 
 TOPIC: {topic}
 
 Remember:
-- 100-150 words maximum
-- Visual, animatable scenes
-- Clear emotional hook at the start
-- Thought-provoking ending
-- Authentic human experience in an AI world
+- 100-150 words maximum (aim for 120-140 for best pacing)
+- ONE protagonist with a common first name
+- Build dread - something is WRONG from the start
+- Show us what the character SEES, not just thinks
+- End with a twist that makes viewers uncomfortable
+- The technology should feel invasive or threatening
+- NO happy endings, NO AI-turns-out-to-be-good resolutions
 
 Return valid JSON only."""
 

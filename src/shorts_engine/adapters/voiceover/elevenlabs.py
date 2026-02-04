@@ -22,11 +22,15 @@ class ElevenLabsProvider(VoiceoverProvider):
     """
 
     # Default voice IDs from ElevenLabs
+    # Browse voices at: https://elevenlabs.io/voice-library
     DEFAULT_VOICES = {
         "narrator": "21m00Tcm4TlvDq8ikWAM",  # Rachel - calm narrator
         "dramatic": "29vD33N1CtxCmqQRPOHJ",  # Drew - dramatic male
         "energetic": "ErXwobaYiN019PkySvjV",  # Antoni - energetic
-        "deep": "VR6AewLTigWG4xSOukaG",  # Arnold - deep voice
+        "deep": "VR6AewLTigWG4xSOukaG",  # Arnold - deep, cinematic voice
+        "thriller": "VR6AewLTigWG4xSOukaG",  # Arnold - ideal for dark/thriller content
+        "mysterious": "2EiwWnXFnvU5JabPnv8n",  # Clyde - gravelly, mysterious
+        "calm_tension": "TxGEqnHWrfWFTfGW9XjX",  # Josh - calm but measured (good for creepy buildup)
     }
 
     def __init__(

@@ -82,6 +82,10 @@ class Settings(BaseSettings):
         default="stub",
         description="Voiceover provider (stub, elevenlabs, edge_tts)",
     )
+    voiceover_default_voice: str = Field(
+        default="thriller",
+        description="Default voice for voiceover (narrator, dramatic, thriller, mysterious, calm_tension)",
+    )
 
     # Platform Publishing
     publisher_youtube_enabled: bool = Field(default=False, description="Enable YouTube publishing")

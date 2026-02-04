@@ -23,13 +23,14 @@ logger = get_logger(__name__)
 # MoviePy 2.x imports
 try:
     from moviepy import (
-        VideoFileClip,
         AudioFileClip,
-        ImageClip,
-        concatenate_videoclips,
-        CompositeVideoClip,
         CompositeAudioClip,
+        CompositeVideoClip,
+        ImageClip,
+        VideoFileClip,
+        concatenate_videoclips,
     )
+
     MOVIEPY_AVAILABLE = True
 except ImportError:
     MOVIEPY_AVAILABLE = False
@@ -191,6 +192,26 @@ class MoviePyRenderer(RendererProvider):
                 voiceover_path = await self._download_file(request.voiceover_url, "voiceover")
                 temp_files.append(voiceover_path)
                 voiceover = AudioFileClip(str(voiceover_path))
+
+                # Handle voiceover duration mismatch with video
+                if voiceover.duration > final_video.duration:
+                    # Voiceover longer than video - clip it
+                    logger.warning(
+                        "voiceover_clipped",
+                        voiceover_duration=voiceover.duration,
+                        video_duration=final_video.duration,
+                    )
+                    voiceover = voiceover.subclipped(0, final_video.duration)
+                elif voiceover.duration < final_video.duration - 5:
+                    # Voiceover significantly shorter (>5s gap) - log warning
+                    # The remaining video will have silence, which may be intentional
+                    logger.warning(
+                        "voiceover_shorter_than_video",
+                        voiceover_duration=voiceover.duration,
+                        video_duration=final_video.duration,
+                        gap_seconds=final_video.duration - voiceover.duration,
+                    )
+
                 audio_clips.append(voiceover)
 
             # Add background music (reduced volume)
@@ -200,7 +221,9 @@ class MoviePyRenderer(RendererProvider):
                 music = AudioFileClip(str(music_path))
                 # Loop if shorter than video
                 if music.duration < final_video.duration:
-                    music = music.with_effects([lambda clip: clip.loop(duration=final_video.duration)])
+                    music = music.with_effects(
+                        [lambda clip: clip.loop(duration=final_video.duration)]
+                    )
                 else:
                     music = music.subclipped(0, final_video.duration)
                 music = music.with_volume_scaled(request.background_music_volume)
@@ -312,6 +335,23 @@ class MoviePyRenderer(RendererProvider):
                 voiceover_path = await self._download_file(request.voiceover_url, "voiceover")
                 temp_files.append(voiceover_path)
                 voiceover = AudioFileClip(str(voiceover_path))
+
+                # Handle voiceover duration mismatch with video
+                if voiceover.duration > final_video.duration:
+                    logger.warning(
+                        "voiceover_clipped",
+                        voiceover_duration=voiceover.duration,
+                        video_duration=final_video.duration,
+                    )
+                    voiceover = voiceover.subclipped(0, final_video.duration)
+                elif voiceover.duration < final_video.duration - 5:
+                    logger.warning(
+                        "voiceover_shorter_than_video",
+                        voiceover_duration=voiceover.duration,
+                        video_duration=final_video.duration,
+                        gap_seconds=final_video.duration - voiceover.duration,
+                    )
+
                 audio_clips.append(voiceover)
 
             if request.background_music_url:
@@ -433,8 +473,8 @@ class MoviePyRenderer(RendererProvider):
                 cropped = frame[y1:y2, x1:x2]
 
                 # Resize to output dimensions
-                from PIL import Image
                 import numpy as np
+                from PIL import Image
 
                 pil_img = Image.fromarray(cropped)
                 pil_img = pil_img.resize((width, height), Image.Resampling.LANCZOS)
