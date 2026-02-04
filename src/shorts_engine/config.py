@@ -288,6 +288,26 @@ class Settings(BaseSettings):
         description="Words per minute for estimating story narration duration",
     )
 
+    # Gemini Configuration
+    gemini_critique_model: str = Field(
+        default="gemini-3.0-pro",
+        description="Gemini model for video critique",
+    )
+
+    # Final Video Critique
+    final_critique_enabled: bool = Field(
+        default=True,
+        description="Enable final video critique after rendering",
+    )
+    final_critique_threshold: float = Field(
+        default=0.7,
+        description="Minimum score to pass final critique (0.0-1.0)",
+    )
+    final_critique_max_iterations: int = Field(
+        default=2,
+        description="Maximum times to regenerate failing scenes",
+    )
+
     # Ralph Loop (Agentic Retry for Video Generation)
     ralph_loop_enabled: bool = Field(
         default=True,

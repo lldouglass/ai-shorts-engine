@@ -145,6 +145,9 @@ class VideoJobModel(Base):
     ralph_max_iterations: Mapped[int] = mapped_column(Integer, server_default="3")
     ralph_status: Mapped[str | None] = mapped_column(String(50), nullable=True, index=True)
 
+    # Final video critique loop fields
+    critique_iteration: Mapped[int] = mapped_column(Integer, server_default="0")
+
     # Relationships
     project: Mapped["ProjectModel"] = relationship("ProjectModel", back_populates="video_jobs")
     story: Mapped["StoryModel | None"] = relationship("StoryModel", back_populates="video_jobs")

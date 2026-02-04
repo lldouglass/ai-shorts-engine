@@ -2,6 +2,7 @@
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 
 
@@ -100,6 +101,40 @@ class LLMProvider(ABC):
             True if the provider can process images
         """
         return False
+
+    @property
+    def supports_video(self) -> bool:
+        """Check if this provider supports native video input.
+
+        Returns:
+            True if the provider can process video files natively
+        """
+        return False
+
+    async def complete_with_video(
+        self,
+        video_path: Path,
+        prompt: str,
+        temperature: float = 0.7,
+        max_tokens: int = 4096,
+        json_mode: bool = False,
+    ) -> LLMResponse:
+        """Analyze a video file natively.
+
+        Args:
+            video_path: Path to the video file
+            prompt: The prompt to use for analysis
+            temperature: Sampling temperature (0-2)
+            max_tokens: Maximum tokens in response
+            json_mode: If True, request JSON output format
+
+        Returns:
+            LLMResponse with generated content
+
+        Raises:
+            NotImplementedError: If the provider doesn't support video
+        """
+        raise NotImplementedError(f"{self.name} does not support native video input")
 
     async def health_check(self) -> bool:
         """Check if the provider is available.

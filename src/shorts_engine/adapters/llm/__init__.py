@@ -2,6 +2,7 @@
 
 from shorts_engine.adapters.llm.anthropic import AnthropicProvider
 from shorts_engine.adapters.llm.base import LLMMessage, LLMProvider, LLMResponse, VisionMessage
+from shorts_engine.adapters.llm.gemini import GeminiProvider
 from shorts_engine.adapters.llm.openai import OpenAIProvider
 from shorts_engine.adapters.llm.stub import StubLLMProvider
 
@@ -11,6 +12,7 @@ __all__ = [
     "LLMResponse",
     "VisionMessage",
     "AnthropicProvider",
+    "GeminiProvider",
     "OpenAIProvider",
     "StubLLMProvider",
 ]

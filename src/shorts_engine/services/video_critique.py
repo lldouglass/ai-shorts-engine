@@ -155,7 +155,13 @@ Set overall_passed=true only if all scores are above their respective thresholds
 
     def _get_vision_provider(self) -> LLMProvider:
         """Get a vision-capable LLM provider."""
-        # OpenAI GPT-4o is preferred for vision
+        # Prefer Gemini for vision/video tasks (more cost-effective)
+        if settings.google_api_key:
+            from shorts_engine.adapters.llm.gemini import GeminiProvider
+
+            return GeminiProvider(model=settings.gemini_critique_model)
+
+        # Fall back to OpenAI GPT-4o
         if settings.openai_api_key:
             return OpenAIProvider(model="gpt-4o")
 

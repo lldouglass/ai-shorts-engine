@@ -1,6 +1,7 @@
 """Stub LLM provider for testing."""
 
 import json
+from pathlib import Path
 
 from shorts_engine.adapters.llm.base import LLMMessage, LLMProvider, LLMResponse, VisionMessage
 from shorts_engine.logging import get_logger
@@ -113,6 +114,68 @@ class StubLLMProvider(LLMProvider):
     def supports_vision(self) -> bool:
         """Stub provider supports vision for testing."""
         return True
+
+    @property
+    def supports_video(self) -> bool:
+        """Stub provider supports video for testing."""
+        return True
+
+    async def complete_with_video(
+        self,
+        video_path: Path,
+        prompt: str,
+        temperature: float = 0.7,  # noqa: ARG002
+        max_tokens: int = 4096,  # noqa: ARG002
+        json_mode: bool = False,
+    ) -> LLMResponse:
+        """Return a mock video analysis response."""
+        logger.info(
+            "stub_llm_video_complete",
+            video_path=str(video_path),
+            json_mode=json_mode,
+        )
+
+        if json_mode:
+            # Return a mock final video critique JSON
+            content = json.dumps(
+                {
+                    "overall_score": 0.85,
+                    "visual_quality_score": 0.88,
+                    "audio_sync_score": 0.82,
+                    "narrative_flow_score": 0.85,
+                    "scene_scores": {
+                        "1": 0.90,
+                        "2": 0.85,
+                        "3": 0.80,
+                        "4": 0.88,
+                        "5": 0.82,
+                    },
+                    "failing_scenes": [],
+                    "feedback": "The video shows good overall quality with consistent style and smooth transitions.",
+                    "improvement_suggestions": [
+                        "Consider adding more dynamic camera movement in scene 3",
+                        "Scene 5 could benefit from tighter audio sync",
+                    ],
+                },
+                indent=2,
+            )
+        else:
+            content = (
+                f"Video analysis for {video_path.name}: "
+                f"The video shows consistent visual style and coherent narrative flow. "
+                f"Audio synchronization is good with minor timing variations."
+            )
+
+        return LLMResponse(
+            content=content,
+            model="stub-video-model",
+            usage={
+                "prompt_tokens": len(prompt.split()),
+                "completion_tokens": len(content.split()),
+                "total_tokens": len(prompt.split()) + len(content.split()),
+            },
+            finish_reason="stop",
+        )
 
     async def complete_with_vision(
         self,

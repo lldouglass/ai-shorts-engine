@@ -762,6 +762,189 @@ def mark_ready_to_publish_task(
 
 
 # =============================================================================
+# RENDER STAGE 3.5: Critique Final Video (NEW)
+# =============================================================================
+
+
+@celery_app.task(
+    bind=True,
+    name="render.critique_final_video",
+    max_retries=2,
+    default_retry_delay=30,
+)
+def critique_final_video_task(
+    self: Any,
+    render_result: dict[str, Any] | None = None,  # First - receives chain result
+    video_job_id: str | None = None,  # Second - passed as kwarg
+) -> dict[str, Any]:
+    """Critique the final rendered video using Gemini's native video understanding.
+
+    If the video fails the critique threshold and we haven't exceeded max iterations,
+    this task identifies failing scenes for regeneration.
+
+    Args:
+        render_result: Optional result from render stage (or chain result)
+        video_job_id: UUID of the video job
+
+    Returns:
+        Dict with critique results and regeneration info
+    """
+    from pathlib import Path
+
+    from shorts_engine.services.final_video_critique import FinalVideoCritiqueService
+
+    task_id = self.request.id
+
+    # Skip if critique is disabled
+    if not settings.final_critique_enabled:
+        logger.info("critique_final_video_skipped", reason="disabled")
+        # Pass through the render result
+        return render_result or {"success": True, "skipped": True, "video_job_id": video_job_id}
+
+    # Extract video_job_id from chain result if not passed directly
+    if video_job_id is None and render_result:
+        video_job_id = render_result.get("video_job_id")
+    if not video_job_id:
+        raise ValueError("video_job_id is required")
+
+    job_uuid = UUID(video_job_id)
+
+    logger.info("critique_final_video_started", task_id=task_id, video_job_id=video_job_id)
+
+    with get_session_context() as session:
+        job = session.get(VideoJobModel, job_uuid)
+        if not job:
+            raise ValueError(f"Video job not found: {video_job_id}")
+
+        # Check if render failed
+        if render_result and not render_result.get("success"):
+            logger.warning(
+                "critique_final_video_skipped",
+                reason="render_failed",
+                video_job_id=video_job_id,
+            )
+            return render_result
+
+        # Get the final video asset
+        final_asset = session.execute(
+            select(AssetModel).where(
+                AssetModel.video_job_id == job_uuid,
+                AssetModel.asset_type == "final_video",
+                AssetModel.status == "ready",
+            )
+        ).scalar_one_or_none()
+
+        if not final_asset:
+            logger.warning(
+                "critique_final_video_skipped",
+                reason="no_final_asset",
+                video_job_id=video_job_id,
+            )
+            return render_result or {"success": True, "video_job_id": video_job_id}
+
+        # Get video path
+        video_path = None
+        if final_asset.file_path:
+            video_path = Path(final_asset.file_path)
+        elif final_asset.url and final_asset.url.startswith("file://"):
+            video_path = Path(final_asset.url.replace("file://", ""))
+
+        if not video_path or not video_path.exists():
+            logger.warning(
+                "critique_final_video_skipped",
+                reason="video_not_found",
+                video_job_id=video_job_id,
+                path=str(video_path),
+            )
+            return render_result or {"success": True, "video_job_id": video_job_id}
+
+        # Run the critique
+        critique_service = FinalVideoCritiqueService()
+        result = run_async(
+            critique_service.critique(
+                video_path=video_path,
+                plan=job.plan_data or {},
+                threshold=settings.final_critique_threshold,
+            )
+        )
+
+        # Store critique results in job metadata
+        job.metadata_ = job.metadata_ or {}
+        job.metadata_["final_critique"] = {
+            "iteration": job.critique_iteration,
+            "overall_score": result.overall_score,
+            "visual_quality_score": result.visual_quality_score,
+            "audio_sync_score": result.audio_sync_score,
+            "narrative_flow_score": result.narrative_flow_score,
+            "scene_scores": result.scene_scores,
+            "failing_scenes": result.failing_scenes,
+            "passed": result.passed,
+            "feedback": result.feedback,
+            "model_used": result.model_used,
+        }
+        session.commit()
+
+        if result.passed:
+            logger.info(
+                "critique_final_video_passed",
+                video_job_id=video_job_id,
+                overall_score=result.overall_score,
+                iteration=job.critique_iteration,
+            )
+            return {
+                "success": True,
+                "video_job_id": video_job_id,
+                "critique_passed": True,
+                "overall_score": result.overall_score,
+                "scene_scores": result.scene_scores,
+            }
+
+        # Critique failed - check if we can retry
+        if job.critique_iteration >= settings.final_critique_max_iterations:
+            logger.warning(
+                "critique_final_video_max_iterations",
+                video_job_id=video_job_id,
+                iteration=job.critique_iteration,
+                overall_score=result.overall_score,
+            )
+            # Accept best effort
+            return {
+                "success": True,
+                "video_job_id": video_job_id,
+                "critique_passed": False,
+                "best_effort": True,
+                "overall_score": result.overall_score,
+                "failing_scenes": result.failing_scenes,
+                "feedback": result.feedback,
+            }
+
+        # Increment iteration and flag for regeneration
+        job.critique_iteration += 1
+        job.stage = "critique_failed"
+        session.commit()
+
+        logger.info(
+            "critique_final_video_failed",
+            video_job_id=video_job_id,
+            overall_score=result.overall_score,
+            failing_scenes=result.failing_scenes,
+            iteration=job.critique_iteration,
+            suggestions=result.improvement_suggestions[:3],
+        )
+
+        return {
+            "success": False,
+            "video_job_id": video_job_id,
+            "critique_passed": False,
+            "regenerating": True,
+            "failing_scenes": result.failing_scenes,
+            "improvement_suggestions": result.improvement_suggestions,
+            "overall_score": result.overall_score,
+            "iteration": job.critique_iteration,
+        }
+
+
+# =============================================================================
 # FULL RENDER PIPELINE ORCHESTRATOR
 # =============================================================================
 
@@ -778,13 +961,15 @@ def run_render_pipeline_task(
     voice_id: str | None = None,
     narration_script: str | None = None,
     background_music_url: str | None = None,
+    skip_critique: bool = False,
 ) -> dict[str, Any]:
     """Run the full render pipeline.
 
     Stages:
     1. Generate voiceover (if enabled)
     2. Render final video
-    3. Mark ready to publish
+    3. Critique final video (if enabled)
+    4. Mark ready to publish
 
     Args:
         video_job_id: UUID of the video job
@@ -793,6 +978,7 @@ def run_render_pipeline_task(
         voice_id: Optional voice ID for voiceover
         narration_script: Optional custom narration script
         background_music_url: Optional background music URL
+        skip_critique: Whether to skip the final video critique step
 
     Returns:
         Dict with job ID and pipeline status
@@ -804,33 +990,69 @@ def run_render_pipeline_task(
         task_id=task_id,
         video_job_id=video_job_id,
         include_voiceover=include_voiceover,
+        skip_critique=skip_critique,
     )
+
+    # Determine if we should include critique
+    include_critique = settings.final_critique_enabled and not skip_critique
 
     # Build pipeline chain
     if include_voiceover:
-        pipeline = chain(
-            generate_voiceover_task.s(
-                video_job_id,
-                narration_script=narration_script,
-                voice_id=voice_id,
-            ),
-            render_final_video_task.s(
-                video_job_id=video_job_id,
-                include_captions=include_captions,
-                background_music_url=background_music_url,
-            ),
-            mark_ready_to_publish_task.s(video_job_id=video_job_id),
-        )
+        if include_critique:
+            pipeline = chain(
+                generate_voiceover_task.s(
+                    video_job_id,
+                    narration_script=narration_script,
+                    voice_id=voice_id,
+                ),
+                render_final_video_task.s(
+                    video_job_id=video_job_id,
+                    include_captions=include_captions,
+                    background_music_url=background_music_url,
+                ),
+                critique_final_video_task.s(video_job_id=video_job_id),
+                mark_ready_to_publish_task.s(video_job_id=video_job_id),
+            )
+            stages = ["voiceover", "render", "critique", "ready_to_publish"]
+        else:
+            pipeline = chain(
+                generate_voiceover_task.s(
+                    video_job_id,
+                    narration_script=narration_script,
+                    voice_id=voice_id,
+                ),
+                render_final_video_task.s(
+                    video_job_id=video_job_id,
+                    include_captions=include_captions,
+                    background_music_url=background_music_url,
+                ),
+                mark_ready_to_publish_task.s(video_job_id=video_job_id),
+            )
+            stages = ["voiceover", "render", "ready_to_publish"]
     else:
-        pipeline = chain(
-            render_final_video_task.s(
-                video_job_id=video_job_id,
-                voiceover_result=None,
-                include_captions=include_captions,
-                background_music_url=background_music_url,
-            ),
-            mark_ready_to_publish_task.s(video_job_id=video_job_id),
-        )
+        if include_critique:
+            pipeline = chain(
+                render_final_video_task.s(
+                    video_job_id=video_job_id,
+                    voiceover_result=None,
+                    include_captions=include_captions,
+                    background_music_url=background_music_url,
+                ),
+                critique_final_video_task.s(video_job_id=video_job_id),
+                mark_ready_to_publish_task.s(video_job_id=video_job_id),
+            )
+            stages = ["render", "critique", "ready_to_publish"]
+        else:
+            pipeline = chain(
+                render_final_video_task.s(
+                    video_job_id=video_job_id,
+                    voiceover_result=None,
+                    include_captions=include_captions,
+                    background_music_url=background_music_url,
+                ),
+                mark_ready_to_publish_task.s(video_job_id=video_job_id),
+            )
+            stages = ["render", "ready_to_publish"]
 
     # Start pipeline
     result = pipeline.apply_async()
@@ -839,9 +1061,5 @@ def run_render_pipeline_task(
         "success": True,
         "video_job_id": video_job_id,
         "pipeline_task_id": result.id,
-        "stages": (
-            ["voiceover", "render", "ready_to_publish"]
-            if include_voiceover
-            else ["render", "ready_to_publish"]
-        ),
+        "stages": stages,
     }
