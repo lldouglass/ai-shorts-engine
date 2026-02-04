@@ -917,7 +917,28 @@ def critique_final_video_task(
                 "scene_scores": result.scene_scores,
             }
 
-        # Critique failed - check if we can retry
+        # Check if critique failed due to system error (not quality)
+        is_system_error = result.feedback.startswith("Critique failed:")
+        if is_system_error:
+            # Don't auto-retry on system errors, flag for manual review
+            job.stage = "critique_error"
+            session.commit()
+
+            logger.error(
+                "critique_final_video_system_error",
+                video_job_id=video_job_id,
+                feedback=result.feedback,
+            )
+
+            return {
+                "success": True,  # Allow pipeline to continue
+                "video_job_id": video_job_id,
+                "critique_passed": False,
+                "needs_review": True,
+                "error": result.feedback,
+            }
+
+        # Critique failed due to quality - check if we can retry
         if job.critique_iteration >= settings.final_critique_max_iterations:
             logger.warning(
                 "critique_final_video_max_iterations",

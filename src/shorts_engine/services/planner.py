@@ -49,11 +49,12 @@ class PlannerService:
     """
 
     SYSTEM_PROMPT = """You are an expert short-form video director and scriptwriter.
-Your task is to create compelling 60-second video plans for vertical short-form content (TikTok, YouTube Shorts, Instagram Reels).
+Your task is to create compelling video plans for vertical short-form content (TikTok, YouTube Shorts, Instagram Reels).
 
 You will receive:
 1. A one-paragraph idea describing the video concept
 2. A style preset with visual tokens and aesthetic guidelines
+3. A target duration and scene count to match the voiceover length
 
 You must output a JSON object with this exact structure:
 {
@@ -62,19 +63,18 @@ You must output a JSON object with this exact structure:
     "scenes": [
         {
             "scene_number": 1,
-            "visual_prompt": "Detailed visual description for AI video generation (5-8 seconds of footage). Include camera movement, lighting, subject details.",
+            "visual_prompt": "Detailed visual description for AI video generation. Include camera movement, lighting, subject details.",
             "continuity_notes": "Notes for maintaining visual consistency with other scenes (character appearance, color grading, style tokens)",
             "caption_beat": "2-6 word caption/hook for this moment",
             "duration_seconds": 5.0
         }
-        // ... 7-8 scenes total, totaling ~60 seconds
+        // ... scenes as specified in the target scene count
     ]
 }
 
 Guidelines:
-- Create 7-8 scenes that tell a complete micro-story
-- Each scene should be 5-8 seconds
-- Total duration should be approximately 60 seconds
+- Create EXACTLY the number of scenes specified in the target scene count
+- Each scene should match the specified duration per scene
 - Visual prompts should be specific and detailed for AI video generation
 - Continuity notes should ensure consistent character/style across scenes
 - Caption beats should be punchy hooks that work as on-screen text
@@ -118,6 +118,7 @@ Guidelines:
         preset: StylePreset,
         optimization_context: str | None = None,
         story_context: dict[str, str] | None = None,
+        target_duration_seconds: float | None = None,
     ) -> str:
         """Build the user prompt with idea and style context.
 
@@ -126,6 +127,7 @@ Guidelines:
             preset: Style preset for visual guidance
             optimization_context: Optional learnings from past performance
             story_context: Optional dict with 'narrative_style' and 'topic' for richer context
+            target_duration_seconds: Optional target total video duration (from voiceover)
         """
         optimization_section = ""
         if optimization_context:
@@ -150,6 +152,23 @@ This video is based on a pre-written story. Preserve the narrative arc and emoti
                 if narrative_style:
                     story_section += f"Narrative Style: {narrative_style} (maintain this perspective in captions)\n"
 
+        # Calculate scene count and duration based on target
+        duration_per_scene = preset.default_duration_per_scene
+        if target_duration_seconds:
+            scene_count = max(8, int(target_duration_seconds / duration_per_scene))
+            # Recalculate duration per scene to match target exactly
+            duration_per_scene = round(target_duration_seconds / scene_count, 1)
+            duration_section = f"""### Target Duration Requirements:
+- Total video duration: {target_duration_seconds} seconds (MUST MATCH)
+- Number of scenes: {scene_count} (create EXACTLY this many)
+- Duration per scene: {duration_per_scene} seconds each
+"""
+        else:
+            scene_count = 8
+            duration_section = f"""### Target Duration Per Scene:
+{duration_per_scene} seconds
+"""
+
         return f"""Create a video plan for the following concept:
 {optimization_section}
 {story_section}
@@ -171,10 +190,9 @@ This video is based on a pre-written story. Preserve the narrative arc and emoti
 ### Camera Style:
 {preset.camera_style}
 
-### Target Duration Per Scene:
-{preset.default_duration_per_scene} seconds
+{duration_section}
 
-Generate a compelling 7-8 scene video plan that brings this idea to life in the {preset.display_name} style."""
+Generate a compelling {scene_count}-scene video plan that brings this idea to life in the {preset.display_name} style."""
 
     async def plan(
         self,
@@ -182,6 +200,7 @@ Generate a compelling 7-8 scene video plan that brings this idea to life in the 
         style_preset_name: str,
         optimization_context: str | None = None,
         story_context: dict[str, str] | None = None,
+        target_duration_seconds: float | None = None,
     ) -> VideoPlan:
         """Generate a video plan from an idea and style preset.
 
@@ -190,6 +209,8 @@ Generate a compelling 7-8 scene video plan that brings this idea to life in the 
             style_preset_name: Name of the style preset to use
             optimization_context: Optional formatted string with learnings from past performance
             story_context: Optional dict with 'narrative_style' and 'topic' from Story
+            target_duration_seconds: Optional target total video duration (from voiceover)
+                If provided, scene count and durations will be calculated to match
 
         Returns:
             VideoPlan with title, description, and scenes
@@ -214,6 +235,7 @@ Generate a compelling 7-8 scene video plan that brings this idea to life in the 
             llm_provider=self.llm.name,
             has_optimization_context=optimization_context is not None,
             has_story_context=story_context is not None,
+            target_duration=target_duration_seconds,
         )
 
         # Build messages
@@ -221,7 +243,9 @@ Generate a compelling 7-8 scene video plan that brings this idea to life in the 
             LLMMessage(role="system", content=self.SYSTEM_PROMPT),
             LLMMessage(
                 role="user",
-                content=self._build_user_prompt(idea, preset, optimization_context, story_context),
+                content=self._build_user_prompt(
+                    idea, preset, optimization_context, story_context, target_duration_seconds
+                ),
             ),
         ]
 
@@ -258,6 +282,18 @@ Generate a compelling 7-8 scene video plan that brings this idea to life in the 
                         scene_data.get("duration_seconds", preset.default_duration_per_scene)
                     ),
                 )
+            )
+
+        # Adjust scene durations to match target duration if specified
+        if target_duration_seconds and scenes:
+            duration_per_scene = round(target_duration_seconds / len(scenes), 2)
+            for scene in scenes:
+                scene.duration_seconds = duration_per_scene
+            logger.info(
+                "adjusted_scene_durations",
+                target_duration=target_duration_seconds,
+                scene_count=len(scenes),
+                duration_per_scene=duration_per_scene,
             )
 
         plan = VideoPlan(

@@ -197,17 +197,17 @@ Focus on actionable feedback that could guide regeneration of specific scenes.""
 
         except Exception as e:
             logger.error("final_video_critique_error", error=str(e))
-            # On error, return a passing result to not block pipeline
+            # On error, flag for manual review instead of auto-passing
             return FinalVideoCritiqueResult(
-                overall_score=1.0,
-                visual_quality_score=1.0,
-                audio_sync_score=1.0,
-                narrative_flow_score=1.0,
+                overall_score=0.0,
+                visual_quality_score=0.0,
+                audio_sync_score=0.0,
+                narrative_flow_score=0.0,
                 scene_scores={},
                 failing_scenes=[],
-                feedback=f"Critique skipped due to error: {e}",
-                improvement_suggestions=[],
-                passed=True,
+                feedback=f"Critique failed: {e}",
+                improvement_suggestions=["Manual review required - critique failed"],
+                passed=False,
                 model_used=self.llm.name,
                 duration_seconds=time.time() - start_time,
             )

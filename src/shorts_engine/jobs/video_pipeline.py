@@ -170,22 +170,32 @@ def plan_job_task(
 
             # Build story context if job has a linked story
             story_context = None
+            target_duration_seconds = None
             if job.story_id and job.story:
                 story_context = {
                     "narrative_style": job.story.narrative_style,
                     "topic": job.story.topic,
                 }
+                # Use story's estimated duration to calculate scene count and durations
+                target_duration_seconds = job.story.estimated_duration_seconds
                 logger.info(
                     "story_context_loaded",
                     video_job_id=video_job_id,
                     story_id=str(job.story_id),
                     narrative_style=job.story.narrative_style,
+                    target_duration=target_duration_seconds,
                 )
 
             # Run planner
             planner = PlannerService()
             plan = run_async(
-                planner.plan(job.idea, job.style_preset, optimization_context, story_context)
+                planner.plan(
+                    job.idea,
+                    job.style_preset,
+                    optimization_context,
+                    story_context,
+                    target_duration_seconds,
+                )
             )
 
             # Update job with plan

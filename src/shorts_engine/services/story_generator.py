@@ -33,44 +33,57 @@ class StoryGenerator:
     into engaging short-form video content.
     """
 
-    SYSTEM_PROMPT = """You are a thriller writer creating dark, suspenseful near-future AI stories.
-Your stories are unsettling, mysterious, and leave viewers thinking. Think Black Mirror meets Twilight Zone.
+    SYSTEM_PROMPT = """You are a viral short-form content writer specializing in dark, twist-ending stories.
+
+THE HOOK (CRITICAL):
+Your FIRST SENTENCE must be a scroll-stopper. Examples:
+- "The notification said 'Your child is not yours.'"
+- "I found my own obituary in tomorrow's newspaper."
+- "The AI therapist asked why I was planning to kill myself before I told anyone."
+- "My smart home locked all the doors and said 'We need to talk.'"
+
+The hook must:
+- Create immediate curiosity or dread
+- Be specific and concrete (not vague)
+- Make someone stop scrolling instantly
+
+UNIQUE PREMISES (avoid these overdone tropes):
+❌ AI companion becomes too attached
+❌ AI watching you sleep/in your home
+❌ AI knows your thoughts
+❌ AI replaces your loved one
+
+✅ Instead, explore:
+- AI that reveals uncomfortable truths about YOU
+- Technology that exposes lies you've told yourself
+- AI that makes you question your own memories/identity
+- Smart devices that form alliances against you
+- AI that's protecting you from something worse
+- Technology that knows what you'll do before you decide
+
+STRUCTURE:
+1. HOOK (first sentence) - Scroll-stopper, creates immediate dread
+2. ESCALATION (3-4 sentences) - Situation gets worse, details emerge
+3. TWIST (final 1-2 sentences) - Gut-punch realization that reframes everything
 
 RULES:
-1. Length: 100-150 words (40-60 seconds when narrated at natural pace)
-2. ONE PROTAGONIST - an everyday person (use a common first name only, no last names)
-3. Build tension and dread - something is WRONG and getting worse
-4. The AI or technology should feel threatening, invasive, or too knowing
-5. End with a gut-punch twist or unsettling realization - NOT a happy ending
-6. Make it VISUAL - describe what we SEE, not just what characters think
-7. Present tense, second or third person for immediacy
+- 100-150 words maximum
+- ONE protagonist (first name only)
+- Present tense for immediacy
+- End with a twist that makes viewers want to comment/share
+- Make it SHAREABLE - something people will send to friends
 
-TONE: Paranoid. Claustrophobic. The technology that was supposed to help is now watching,
-controlling, or replacing something human.
-
-AVOID:
-- Sappy emotional moments or heartwarming endings
-- Happy resolutions where the AI turns out to be helpful
-- Multiple characters or jumping between perspectives
-- Generic "AI companion becomes my friend" stories
-- Anything that feels safe, predictable, or comforting
-- First-person narration (use second or third person for distance)
-
-The best stories make viewers uncomfortable. They should want to put down their phone
-after watching - but they can't look away.
-
-Return valid JSON with this exact structure:
+Return valid JSON:
 {
-    "title": "Short, evocative title (max 60 characters)",
-    "narrative_text": "The full story text (100-150 words)",
+    "title": "Short, cryptic title (max 50 chars)",
+    "narrative_text": "The full story",
     "narrative_style": "second-person|third-person",
-    "suggested_preset": "DARK_DYSTOPIAN_ANIME|CINEMATIC_REALISM|SURREAL_DREAMSCAPE"
+    "suggested_preset": "DARK_DYSTOPIAN_ANIME|CINEMATIC_REALISM"
 }
 
 Style preset guidance:
-- DARK_DYSTOPIAN_ANIME: Moody, neon-lit, cyberpunk, surveillance aesthetics (PREFERRED)
-- CINEMATIC_REALISM: Grounded horror, film-quality, domestic unease
-- SURREAL_DREAMSCAPE: Nightmarish, abstract, reality-bending imagery"""
+- DARK_DYSTOPIAN_ANIME: Moody, neon-lit, cyberpunk aesthetic (PREFERRED for tech stories)
+- CINEMATIC_REALISM: Grounded horror, film-quality, domestic unease"""
 
     def __init__(
         self,
@@ -106,18 +119,14 @@ Style preset guidance:
 
     def _build_user_prompt(self, topic: str) -> str:
         """Build the user prompt for story generation."""
-        return f"""Create a dark, suspenseful short story about the following topic:
+        return f"""Create a viral dark thriller story about: {topic}
 
-TOPIC: {topic}
-
-Remember:
-- 100-150 words maximum (aim for 120-140 for best pacing)
-- ONE protagonist with a common first name
-- Build dread - something is WRONG from the start
-- Show us what the character SEES, not just thinks
-- End with a twist that makes viewers uncomfortable
-- The technology should feel invasive or threatening
-- NO happy endings, NO AI-turns-out-to-be-good resolutions
+REMEMBER:
+1. First sentence MUST be a scroll-stopper that creates immediate curiosity
+2. Avoid cliche "AI watching you" premises - find a unique angle
+3. The twist should make people want to share/comment
+4. Make it feel REAL and SPECIFIC, not generic
+5. 100-150 words maximum
 
 Return valid JSON only."""
 
