@@ -222,12 +222,29 @@ async def generate_voiceover(
     with open(voiceover_path, "wb") as f:
         f.write(result.audio_data)
 
-    # Get ACTUAL duration from the saved file (ElevenLabs estimate is often wrong)
-    from moviepy import AudioFileClip
+    # Get ACTUAL duration - try ffprobe first (doesn't hold file locks), then estimate
+    actual_duration = result.duration_seconds  # Default to estimate
+    try:
+        import subprocess
 
-    audio_clip = AudioFileClip(str(voiceover_path))
-    actual_duration = audio_clip.duration
-    audio_clip.close()
+        probe_result = subprocess.run(
+            [
+                "ffprobe",
+                "-v",
+                "error",
+                "-show_entries",
+                "format=duration",
+                "-of",
+                "default=noprint_wrappers=1:nokey=1",
+                str(voiceover_path),
+            ],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        actual_duration = float(probe_result.stdout.strip())
+    except (subprocess.CalledProcessError, FileNotFoundError, ValueError):
+        print("   [INFO] Using ElevenLabs duration estimate (ffprobe not available)")
 
     print(f"   [OK] Saved to {voiceover_path}")
     print(f"   ElevenLabs estimate: {result.duration_seconds}s")

@@ -143,6 +143,8 @@ class VeoProvider(VideoGenProvider):
         client = self._get_client()
 
         # Build reference images config if provided
+        # NOTE: Reference images are documented for Veo 3.1 but may not be available
+        # for all API access levels. We attempt to use them but gracefully skip if unsupported.
         reference_images_config = None
         if reference_images and "3.1" in self.model:
             try:
@@ -172,8 +174,11 @@ class VeoProvider(VideoGenProvider):
             "aspect_ratio": aspect_ratio,
             "number_of_videos": 1,
             "duration_seconds": duration_seconds,
-            "person_generation": "allow_adult",
         }
+
+        # Veo 2.0 supports person_generation, Veo 3.1 does not
+        if "3.1" not in self.model:
+            config_kwargs["person_generation"] = "allow_adult"
 
         # Add optional fields if provided
         if negative_prompt:
@@ -182,11 +187,29 @@ class VeoProvider(VideoGenProvider):
             config_kwargs["reference_images"] = reference_images_config
 
         # Submit the generation request
-        operation = client.models.generate_videos(
-            model=self.model,
-            prompt=prompt,
-            config=types.GenerateVideosConfig(**config_kwargs),
-        )
+        # If reference images cause "use case not supported" error, retry without them
+        try:
+            operation = client.models.generate_videos(
+                model=self.model,
+                prompt=prompt,
+                config=types.GenerateVideosConfig(**config_kwargs),
+            )
+        except Exception as e:
+            error_str = str(e)
+            if "not supported" in error_str.lower() and reference_images_config:
+                logger.warning(
+                    "veo_reference_images_not_supported_retrying",
+                    error=error_str,
+                )
+                # Retry without reference images
+                config_kwargs.pop("reference_images", None)
+                operation = client.models.generate_videos(
+                    model=self.model,
+                    prompt=prompt,
+                    config=types.GenerateVideosConfig(**config_kwargs),
+                )
+            else:
+                raise
 
         operation_name = operation.name
         logger.info("veo_generation_submitted", operation_name=operation_name)

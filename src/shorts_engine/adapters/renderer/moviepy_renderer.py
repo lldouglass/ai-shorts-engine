@@ -254,6 +254,8 @@ class MoviePyRenderer(RendererProvider):
             final_video.close()
             for clip in video_clips:
                 clip.close()
+            for clip in audio_clips:
+                clip.close()
             for temp_file in temp_files:
                 temp_file.unlink(missing_ok=True)
 
@@ -385,6 +387,8 @@ class MoviePyRenderer(RendererProvider):
             # Cleanup
             final_video.close()
             for clip in video_clips:
+                clip.close()
+            for clip in audio_clips:
                 clip.close()
             for temp_file in temp_files:
                 temp_file.unlink(missing_ok=True)
