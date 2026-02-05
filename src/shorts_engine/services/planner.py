@@ -72,6 +72,26 @@ You must output a JSON object with this exact structure:
     ]
 }
 
+IMPORTANT VISUAL RULES (MUST FOLLOW):
+- NEVER include text, letters, numbers, words, titles, or subtitles in visual descriptions
+- No signs with readable text, labels, UI elements, or written content in scenes
+- Avoid describing screens, monitors, or devices showing text/data
+- Focus purely on visual imagery, actions, expressions, and atmosphere
+- If a scene involves reading or writing, describe the ACTION without specifying visible text
+
+CHARACTER CONSISTENCY RULES:
+- In scene 1, define ONE detailed character description including: physical appearance, clothing, distinctive features, hair style/color
+- Copy the EXACT same character description word-for-word to every subsequent scene's visual_prompt
+- Never use synonyms, abbreviations, or variations for character attributes
+- Maintain consistent: lighting direction, color grading, camera style, environment type
+- If introducing new characters, give them equally detailed and consistent descriptions
+
+PROMPT STRUCTURE FOR EACH SCENE:
+1. Camera/shot description (angle, movement, framing)
+2. Character description (IDENTICAL across all scenes - copy-paste from scene 1)
+3. Setting/environment (consistent lighting and atmosphere)
+4. Specific action or motion for this scene only
+
 Guidelines:
 - Create EXACTLY the number of scenes specified in the target scene count
 - Each scene should match the specified duration per scene

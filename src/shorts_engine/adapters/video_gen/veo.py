@@ -18,13 +18,19 @@ class VeoProvider(VideoGenProvider):
     """Google Veo video generation via Gemini API.
 
     Uses the google-genai SDK to generate videos through Google's Veo model.
-    Supports both veo-2.0-generate-001 (stable) and veo-3.1-fast-generate-preview (faster).
+    Supports veo-2.0-generate-001 (stable), veo-3.1-generate-preview, and
+    veo-3.1-fast-generate-preview (faster).
+
+    Veo 3.1 features:
+    - Reference images (up to 3) for character/style consistency
+    - Negative prompts to avoid unwanted elements
+    - Duration options: 4, 6, or 8 seconds (vs 5-8 for Veo 2.0)
     """
 
     def __init__(
         self,
         api_key: str | None = None,
-        model: str = "veo-2.0-generate-001",
+        model: str = "veo-3.1-generate-preview",
         poll_interval: float = 10.0,
         max_poll_attempts: int = 60,
     ) -> None:
@@ -32,7 +38,7 @@ class VeoProvider(VideoGenProvider):
 
         Args:
             api_key: Google API key for Gemini/Veo. Falls back to settings.
-            model: Veo model to use. Defaults to veo-2.0-generate-001.
+            model: Veo model to use. Defaults to veo-3.1-generate-preview.
             poll_interval: Seconds between status polls.
             max_poll_attempts: Maximum polling attempts before timeout.
         """
@@ -86,8 +92,14 @@ class VeoProvider(VideoGenProvider):
         # Map aspect ratio to Veo format (9:16 for shorts)
         aspect_ratio = request.aspect_ratio or "9:16"
 
-        # Veo supports 4-8 seconds, use 8 for best quality
-        duration_seconds = min(max(request.duration_seconds, 4), 8)
+        # Handle duration based on model version
+        if "3.1" in self.model:
+            # Veo 3.1 only supports 4, 6, or 8 seconds
+            valid_durations = [4, 6, 8]
+            duration_seconds = min(valid_durations, key=lambda x: abs(x - request.duration_seconds))
+        else:
+            # Veo 2.0 supports 5-8 seconds
+            duration_seconds = min(max(request.duration_seconds, 5), 8)
 
         logger.info(
             "veo_generation_started",
@@ -95,13 +107,21 @@ class VeoProvider(VideoGenProvider):
             aspect_ratio=aspect_ratio,
             duration_seconds=duration_seconds,
             model=self.model,
+            has_reference_images=bool(request.reference_images),
+            has_negative_prompt=bool(request.negative_prompt),
         )
 
         try:
             # Run the synchronous SDK calls in a thread pool
             result = await asyncio.get_event_loop().run_in_executor(
                 None,
-                lambda: self._generate_sync(full_prompt, aspect_ratio, duration_seconds),
+                lambda: self._generate_sync(
+                    full_prompt,
+                    aspect_ratio,
+                    duration_seconds,
+                    request.negative_prompt,
+                    request.reference_images,
+                ),
             )
             return result
 
@@ -114,22 +134,58 @@ class VeoProvider(VideoGenProvider):
         prompt: str,
         aspect_ratio: str,
         duration_seconds: int,
+        negative_prompt: str | None = None,
+        reference_images: list[bytes] | None = None,
     ) -> VideoGenResult:
         """Synchronous video generation (runs in thread pool)."""
         from google.genai import types
 
         client = self._get_client()
 
+        # Build reference images config if provided
+        reference_images_config = None
+        if reference_images and "3.1" in self.model:
+            try:
+                reference_images_config = [
+                    types.VideoGenerationReferenceImage(
+                        image=types.Image(
+                            image_bytes=img,
+                            mime_type="image/jpeg",
+                        ),
+                        reference_type="asset",
+                    )
+                    for img in reference_images[:3]  # Max 3 reference images
+                ]
+                logger.info(
+                    "veo_reference_images_added",
+                    count=len(reference_images_config),
+                )
+            except Exception as e:
+                logger.warning(
+                    "veo_reference_images_failed",
+                    error=str(e),
+                )
+                reference_images_config = None
+
+        # Build config with optional fields
+        config_kwargs: dict[str, Any] = {
+            "aspect_ratio": aspect_ratio,
+            "number_of_videos": 1,
+            "duration_seconds": duration_seconds,
+            "person_generation": "allow_adult",
+        }
+
+        # Add optional fields if provided
+        if negative_prompt:
+            config_kwargs["negative_prompt"] = negative_prompt
+        if reference_images_config:
+            config_kwargs["reference_images"] = reference_images_config
+
         # Submit the generation request
         operation = client.models.generate_videos(
             model=self.model,
             prompt=prompt,
-            config=types.GenerateVideosConfig(
-                aspect_ratio=aspect_ratio,
-                number_of_videos=1,
-                duration_seconds=duration_seconds,
-                person_generation="allow_adult",
-            ),
+            config=types.GenerateVideosConfig(**config_kwargs),
         )
 
         operation_name = operation.name

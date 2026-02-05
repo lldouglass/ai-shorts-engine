@@ -281,7 +281,7 @@ def render_final_video_task(
     self: Any,  # noqa: ARG001
     voiceover_result: dict[str, Any] | None = None,  # First - receives chain result
     video_job_id: str | None = None,  # Second - passed as kwarg
-    include_captions: bool = True,
+    include_captions: bool = False,  # Default to no on-screen text
     background_music_url: str | None = None,
 ) -> dict[str, Any]:
     """Render the final video composition.
@@ -996,7 +996,7 @@ def run_render_pipeline_task(
     self: Any,  # noqa: ARG001
     video_job_id: str,
     include_voiceover: bool = True,
-    include_captions: bool = True,
+    include_captions: bool = False,  # Default to no on-screen text
     voice_id: str | None = None,
     narration_script: str | None = None,
     background_music_url: str | None = None,

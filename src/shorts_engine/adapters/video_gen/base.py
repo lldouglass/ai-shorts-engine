@@ -24,6 +24,8 @@ class VideoGenRequest:
     duration_seconds: int = 60
     style: str | None = None
     aspect_ratio: str = "9:16"  # Vertical for Shorts
+    negative_prompt: str | None = None  # Things to avoid in generation
+    reference_images: list[bytes] | None = None  # Up to 3 reference images for consistency
     options: dict[str, Any] | None = None
 
 

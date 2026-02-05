@@ -83,7 +83,7 @@ class Settings(BaseSettings):
         description="Voiceover provider (stub, elevenlabs, edge_tts)",
     )
     voiceover_default_voice: str = Field(
-        default="thriller",
+        default="narrator",  # Rachel - calm, professional narrator voice
         description="Default voice for voiceover (narrator, dramatic, thriller, mysterious, calm_tension)",
     )
 
@@ -134,8 +134,8 @@ class Settings(BaseSettings):
     luma_api_key: str | None = Field(default=None, description="Luma AI API key")
     google_api_key: str | None = Field(default=None, description="Google API key for Gemini/Veo")
     veo_model: str = Field(
-        default="veo-2.0-generate-001",
-        description="Veo model (veo-2.0-generate-001, veo-3.1-fast-generate-preview)",
+        default="veo-3.1-generate-preview",
+        description="Veo model (veo-2.0-generate-001, veo-3.1-generate-preview, veo-3.1-fast-generate-preview)",
     )
     creatomate_api_key: str | None = Field(default=None, description="Creatomate API key")
     creatomate_webhook_url: str | None = Field(
@@ -276,6 +276,12 @@ class Settings(BaseSettings):
     video_gen_rate_limit_seconds: int = Field(
         default=15,
         description="Seconds between video generation requests to avoid API rate limits",
+    )
+
+    # Video Consistency
+    video_frame_chaining_enabled: bool = Field(
+        default=True,
+        description="Chain clips using last frame as reference for next clip",
     )
 
     # Story Generation
