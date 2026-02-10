@@ -65,6 +65,10 @@ def get_video_gen_provider() -> VideoGenProvider:
         from shorts_engine.adapters.video_gen.veo import VeoProvider
 
         return VeoProvider(model=settings.veo_model)
+    elif provider == "kling":
+        from shorts_engine.adapters.video_gen.kling import KlingProvider
+
+        return KlingProvider()
     else:
         return StubVideoGenProvider()
 
