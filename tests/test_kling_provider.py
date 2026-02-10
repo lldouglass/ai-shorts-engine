@@ -1,4 +1,4 @@
-"""Tests for Kling 2.6 Pro video generation provider."""
+"""Tests for Kling video generation provider (text-to-video and image-to-video)."""
 
 from unittest.mock import AsyncMock, patch
 
@@ -172,6 +172,173 @@ class TestKlingHealthCheck:
         finally:
             if env_backup:
                 os.environ["FAL_KEY"] = env_backup
+
+
+class TestKlingImageToVideo:
+    @pytest.mark.asyncio
+    async def test_generate_with_reference_image(self) -> None:
+        """When reference_images is provided, use image-to-video model."""
+        provider = KlingProvider(api_key="test-key")
+
+        mock_result = {
+            "video": {"url": "https://fal.media/files/example/img2vid_output.mp4"}
+        }
+        fake_image_bytes = b"\xff\xd8\xff\xe0fake-jpeg-data"
+
+        with (
+            patch("fal_client.subscribe_async", new_callable=AsyncMock) as mock_subscribe,
+            patch.object(
+                provider, "_upload_reference_image", new_callable=AsyncMock
+            ) as mock_upload,
+        ):
+            mock_subscribe.return_value = mock_result
+            mock_upload.return_value = "https://fal.media/uploads/ref.jpg"
+
+            request = VideoGenRequest(
+                prompt="A forest path continuing",
+                duration_seconds=5,
+                aspect_ratio="9:16",
+                reference_images=[fake_image_bytes],
+            )
+            result = await provider.generate(request)
+
+        assert result.success is True
+        assert result.metadata is not None
+        assert result.metadata["model"] == KlingProvider.FAL_MODEL_IMG2VID
+        assert result.metadata["video_url"] == "https://fal.media/files/example/img2vid_output.mp4"
+
+        # Verify image-to-video model was called with image_url
+        mock_subscribe.assert_called_once_with(
+            KlingProvider.FAL_MODEL_IMG2VID,
+            arguments={
+                "prompt": "A forest path continuing",
+                "image_url": "https://fal.media/uploads/ref.jpg",
+                "duration": "5",
+                "aspect_ratio": "9:16",
+                "negative_prompt": "blur, distort, low quality",
+                "generate_audio": False,
+            },
+        )
+        mock_upload.assert_called_once_with(fake_image_bytes)
+
+    @pytest.mark.asyncio
+    async def test_generate_without_reference_uses_text_to_video(self) -> None:
+        """Without reference_images, use text-to-video model (unchanged behavior)."""
+        provider = KlingProvider(api_key="test-key")
+
+        mock_result = {
+            "video": {"url": "https://fal.media/files/example/output.mp4"}
+        }
+
+        with patch("fal_client.subscribe_async", new_callable=AsyncMock) as mock_subscribe:
+            mock_subscribe.return_value = mock_result
+
+            request = VideoGenRequest(
+                prompt="A cat walking through a forest",
+                duration_seconds=5,
+                aspect_ratio="9:16",
+            )
+            result = await provider.generate(request)
+
+        assert result.success is True
+        assert result.metadata["model"] == KlingProvider.FAL_MODEL
+
+        mock_subscribe.assert_called_once_with(
+            KlingProvider.FAL_MODEL,
+            arguments={
+                "prompt": "A cat walking through a forest",
+                "duration": "5",
+                "aspect_ratio": "9:16",
+                "negative_prompt": "blur, distort, low quality",
+                "generate_audio": False,
+            },
+        )
+
+    @pytest.mark.asyncio
+    async def test_generate_empty_reference_images_uses_text_to_video(self) -> None:
+        """Empty reference_images list should still use text-to-video."""
+        provider = KlingProvider(api_key="test-key")
+
+        mock_result = {
+            "video": {"url": "https://fal.media/files/example/output.mp4"}
+        }
+
+        with patch("fal_client.subscribe_async", new_callable=AsyncMock) as mock_subscribe:
+            mock_subscribe.return_value = mock_result
+
+            request = VideoGenRequest(
+                prompt="A scene",
+                duration_seconds=5,
+                reference_images=[],
+            )
+            result = await provider.generate(request)
+
+        assert result.success is True
+        assert result.metadata["model"] == KlingProvider.FAL_MODEL
+
+
+class TestKlingUploadReferenceImage:
+    @pytest.mark.asyncio
+    async def test_upload_reference_image(self) -> None:
+        """Test uploading reference image to fal CDN."""
+        provider = KlingProvider(api_key="test-key")
+        fake_image_bytes = b"\xff\xd8\xff\xe0fake-jpeg-data"
+
+        with patch(
+            "fal_client.upload_file_async", new_callable=AsyncMock
+        ) as mock_upload:
+            mock_upload.return_value = "https://fal.media/uploads/test.jpg"
+
+            url = await provider._upload_reference_image(fake_image_bytes)
+
+        assert url == "https://fal.media/uploads/test.jpg"
+        mock_upload.assert_called_once()
+        # Verify it was called with a temp file path (string)
+        call_arg = mock_upload.call_args[0][0]
+        assert call_arg.endswith(".jpg")
+
+    @pytest.mark.asyncio
+    async def test_upload_reference_image_cleans_up_temp_file(self) -> None:
+        """Temp file should be cleaned up even on success."""
+        import os
+
+        provider = KlingProvider(api_key="test-key")
+        fake_image_bytes = b"\xff\xd8\xff\xe0fake-jpeg-data"
+        captured_path = None
+
+        async def capture_path(path: str) -> str:
+            nonlocal captured_path
+            captured_path = path
+            return "https://fal.media/uploads/test.jpg"
+
+        with patch("fal_client.upload_file_async", side_effect=capture_path):
+            await provider._upload_reference_image(fake_image_bytes)
+
+        assert captured_path is not None
+        assert not os.path.exists(captured_path), "Temp file should be deleted after upload"
+
+    @pytest.mark.asyncio
+    async def test_upload_reference_image_cleans_up_on_error(self) -> None:
+        """Temp file should be cleaned up even if upload fails."""
+        import os
+
+        provider = KlingProvider(api_key="test-key")
+        fake_image_bytes = b"\xff\xd8\xff\xe0fake-jpeg-data"
+        captured_path = None
+
+        async def capture_and_fail(path: str) -> str:
+            nonlocal captured_path
+            captured_path = path
+            raise RuntimeError("Upload failed")
+
+        with (
+            patch("fal_client.upload_file_async", side_effect=capture_and_fail),
+            pytest.raises(RuntimeError, match="Upload failed"),
+        ):
+            await provider._upload_reference_image(fake_image_bytes)
+
+        assert captured_path is not None
+        assert not os.path.exists(captured_path), "Temp file should be deleted after failure"
 
 
 class TestKlingCheckStatus:

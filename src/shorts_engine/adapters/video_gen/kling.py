@@ -1,6 +1,12 @@
-"""Kling 2.6 Pro video generation provider via fal.ai."""
+"""Kling video generation provider via fal.ai.
+
+Supports both text-to-video (Kling 2.6 Pro) and image-to-video (Kling O1)
+for frame chaining across scenes.
+"""
 
 import os
+import tempfile
+from pathlib import Path
 from typing import Any
 
 from shorts_engine.adapters.video_gen.base import (
@@ -15,10 +21,13 @@ logger = get_logger(__name__)
 
 
 class KlingProvider(VideoGenProvider):
-    """Kling 2.6 Pro video generation via fal.ai.
+    """Kling video generation via fal.ai.
 
     Uses the fal-client SDK with subscribe_async() for automatic polling.
-    Generates cinematic video clips at ~$0.35/clip.
+
+    Models:
+    - FAL_MODEL: Kling 2.6 Pro text-to-video (scene 1 or no reference image)
+    - FAL_MODEL_IMG2VID: Kling O1 image-to-video (scenes 2+ with frame chaining)
 
     Duration mapping:
     - duration_seconds <= 5 → "5" (fal string format)
@@ -26,6 +35,7 @@ class KlingProvider(VideoGenProvider):
     """
 
     FAL_MODEL = "fal-ai/kling-video/v2.6/pro/text-to-video"
+    FAL_MODEL_IMG2VID = "fal-ai/kling-video/o1/image-to-video"
 
     def __init__(self, api_key: str | None = None) -> None:
         self.api_key = api_key or getattr(settings, "fal_api_key", None)
@@ -71,23 +81,42 @@ class KlingProvider(VideoGenProvider):
         aspect_ratio = request.aspect_ratio or "9:16"
         negative_prompt = request.negative_prompt or "blur, distort, low quality"
 
+        has_reference = bool(request.reference_images and len(request.reference_images) > 0)
+
+        if has_reference:
+            image_url = await self._upload_reference_image(request.reference_images[0])
+            model = self.FAL_MODEL_IMG2VID
+            arguments: dict[str, Any] = {
+                "prompt": full_prompt,
+                "image_url": image_url,
+                "duration": duration,
+                "aspect_ratio": aspect_ratio,
+                "negative_prompt": negative_prompt,
+                "generate_audio": False,
+            }
+        else:
+            model = self.FAL_MODEL
+            arguments = {
+                "prompt": full_prompt,
+                "duration": duration,
+                "aspect_ratio": aspect_ratio,
+                "negative_prompt": negative_prompt,
+                "generate_audio": False,
+            }
+
         logger.info(
             "kling_generation_started",
+            model=model,
             prompt_length=len(full_prompt),
             duration=duration,
             aspect_ratio=aspect_ratio,
+            has_reference=has_reference,
         )
 
         try:
             result = await fal_client.subscribe_async(
-                self.FAL_MODEL,
-                arguments={
-                    "prompt": full_prompt,
-                    "duration": duration,
-                    "aspect_ratio": aspect_ratio,
-                    "negative_prompt": negative_prompt,
-                    "generate_audio": False,
-                },
+                model,
+                arguments=arguments,
             )
 
             video_url = result.get("video", {}).get("url")
@@ -102,6 +131,7 @@ class KlingProvider(VideoGenProvider):
 
             logger.info(
                 "kling_generation_completed",
+                model=model,
                 video_url=video_url[:100],
                 duration_seconds=duration_seconds,
             )
@@ -113,13 +143,39 @@ class KlingProvider(VideoGenProvider):
                 metadata={
                     "provider": self.name,
                     "video_url": video_url,
-                    "model": self.FAL_MODEL,
+                    "model": model,
                 },
             )
 
         except Exception as e:
             logger.error("kling_generation_error", error=str(e))
             return VideoGenResult(success=False, error_message=str(e))
+
+    async def _upload_reference_image(self, image_bytes: bytes) -> str:
+        """Save image bytes to temp file and upload to fal CDN.
+
+        Args:
+            image_bytes: JPEG image bytes to upload.
+
+        Returns:
+            URL of the uploaded image on fal CDN.
+        """
+        import fal_client
+
+        with tempfile.NamedTemporaryFile(suffix=".jpg", delete=False) as f:
+            f.write(image_bytes)
+            temp_path = f.name
+
+        try:
+            url = await fal_client.upload_file_async(temp_path)
+            logger.info(
+                "kling_reference_image_uploaded",
+                image_size=len(image_bytes),
+                url=url[:100],
+            )
+            return url
+        finally:
+            Path(temp_path).unlink(missing_ok=True)
 
     async def check_status(self, job_id: str) -> dict[str, Any]:
         """Check the status of a fal.ai generation job.

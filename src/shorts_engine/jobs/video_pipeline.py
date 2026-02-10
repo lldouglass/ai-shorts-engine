@@ -392,38 +392,31 @@ def plan_job_task(
 # =============================================================================
 
 
-@celery_app.task(
-    bind=True,
-    name="pipeline.generate_scene_clip",
-    max_retries=5,
-    default_retry_delay=60,
-    autoretry_for=(Exception,),
-    retry_backoff=True,
-    retry_backoff_max=600,
-)
-def generate_scene_clip_task(
-    self: Any,
+def _generate_single_scene_clip(
     scene_id: str,
     video_job_id: str,
+    previous_clip_path: str | None = None,
 ) -> dict[str, Any]:
-    """Generate a video clip for a single scene.
+    """Core scene clip generation logic.
+
+    Used by both the Celery task and sequential frame chaining loop.
 
     Args:
-        scene_id: UUID of the scene to generate
-        video_job_id: UUID of the parent video job
+        scene_id: UUID of the scene to generate.
+        video_job_id: UUID of the parent video job.
+        previous_clip_path: Optional path to previous clip for frame chaining.
 
     Returns:
-        Dict with asset information
+        Dict with asset information.
     """
-    task_id = self.request.id
     scene_uuid = UUID(scene_id)
     job_uuid = UUID(video_job_id)
 
     logger.info(
         "generate_scene_clip_started",
-        task_id=task_id,
         scene_id=scene_id,
         video_job_id=video_job_id,
+        previous_clip_path=previous_clip_path,
     )
 
     with get_session_context() as session:
@@ -452,6 +445,7 @@ def generate_scene_clip_task(
                 "success": True,
                 "scene_id": scene_id,
                 "asset_id": str(existing_asset.id),
+                "file_path": existing_asset.file_path,
                 "skipped": True,
             }
 
@@ -472,12 +466,35 @@ def generate_scene_clip_task(
             if scene.continuity_notes:
                 full_prompt = f"{full_prompt}. {scene.continuity_notes}"
 
+            # Frame chaining: extract last frame from previous clip
+            reference_images = None
+            if previous_clip_path and settings.video_frame_chaining_enabled:
+                from shorts_engine.utils.frame_extraction import extract_last_frame
+
+                clip_path = Path(previous_clip_path)
+                if clip_path.exists():
+                    frame_bytes = extract_last_frame(clip_path)
+                    reference_images = [frame_bytes]
+                    logger.info(
+                        "frame_chaining_extracted",
+                        scene_id=scene_id,
+                        previous_clip=previous_clip_path,
+                        frame_size=len(frame_bytes),
+                    )
+                else:
+                    logger.warning(
+                        "frame_chaining_clip_not_found",
+                        scene_id=scene_id,
+                        previous_clip=previous_clip_path,
+                    )
+
             # Generate video
             provider = get_video_gen_provider()
             request = VideoGenRequest(
                 prompt=full_prompt,
                 duration_seconds=int(scene.duration_seconds),
                 aspect_ratio="9:16",  # Vertical for shorts
+                reference_images=reference_images,
             )
 
             result = run_async(provider.generate(request))
@@ -586,6 +603,36 @@ def generate_scene_clip_task(
 
 @celery_app.task(
     bind=True,
+    name="pipeline.generate_scene_clip",
+    max_retries=5,
+    default_retry_delay=60,
+    autoretry_for=(Exception,),
+    retry_backoff=True,
+    retry_backoff_max=600,
+)
+def generate_scene_clip_task(
+    self: Any,
+    scene_id: str,
+    video_job_id: str,
+) -> dict[str, Any]:
+    """Generate a video clip for a single scene.
+
+    Delegates to _generate_single_scene_clip for the actual work.
+
+    Args:
+        scene_id: UUID of the scene to generate
+        video_job_id: UUID of the parent video job
+
+    Returns:
+        Dict with asset information
+    """
+    task_id = self.request.id
+    logger.info("generate_scene_clip_task_dispatched", task_id=task_id, scene_id=scene_id)
+    return _generate_single_scene_clip(scene_id, video_job_id)
+
+
+@celery_app.task(
+    bind=True,
     name="pipeline.generate_all_scenes",
 )
 def generate_all_scenes_task(
@@ -595,19 +642,24 @@ def generate_all_scenes_task(
 ) -> dict[str, Any]:
     """Orchestrate generation of all scene video clips.
 
-    This task dispatches individual scene generation tasks
-    and waits for all to complete.
+    When frame chaining is enabled, generates scenes sequentially so each
+    scene can use the last frame of the previous clip as a reference image
+    (image-to-video instead of text-to-video).
 
     When Ralph loop is enabled, delegates to ralph_loop_task
     for agentic retry with quality checks.
+
+    Otherwise dispatches individual scene tasks with staggered delays.
     """
     ralph_enabled = settings.ralph_loop_enabled
+    frame_chaining = settings.video_frame_chaining_enabled
 
     logger.info(
         "generate_all_scenes_started",
         video_job_id=video_job_id,
         scene_count=len(scene_ids),
         ralph_enabled=ralph_enabled,
+        frame_chaining=frame_chaining,
     )
 
     with get_session_context() as session:
@@ -619,7 +671,7 @@ def generate_all_scenes_task(
                 job.ralph_max_iterations = settings.ralph_max_iterations
             session.commit()
 
-    # Use Ralph loop when enabled
+    # Use Ralph loop when enabled (takes priority over frame chaining)
     if ralph_enabled:
         from shorts_engine.jobs.ralph_tasks import ralph_loop_task
 
@@ -645,7 +697,61 @@ def generate_all_scenes_task(
                 "error": f"Ralph loop failed: {str(e)}",
             }
 
-    # Standard generation (no Ralph loop) - staggered to avoid rate limits
+    # Frame chaining: generate scenes sequentially, passing last frame between clips
+    if frame_chaining:
+        logger.info(
+            "generate_all_scenes_frame_chaining",
+            video_job_id=video_job_id,
+            scene_count=len(scene_ids),
+        )
+
+        previous_clip_path: str | None = None
+        results = []
+
+        for scene_id in scene_ids:
+            try:
+                result = _generate_single_scene_clip(
+                    scene_id, video_job_id, previous_clip_path
+                )
+                results.append(result)
+
+                # Chain: pass file_path of successful clip to next scene
+                if result.get("success") and result.get("file_path"):
+                    previous_clip_path = result["file_path"]
+                else:
+                    previous_clip_path = None  # Reset chain on failure
+            except Exception as e:
+                logger.error(
+                    "generate_scene_clip_error_in_chain",
+                    scene_id=scene_id,
+                    video_job_id=video_job_id,
+                    error=str(e),
+                )
+                results.append({
+                    "success": False,
+                    "scene_id": scene_id,
+                    "error": str(e),
+                })
+                previous_clip_path = None  # Reset chain on failure
+
+        success_count = sum(1 for r in results if r.get("success"))
+        logger.info(
+            "generate_all_scenes_completed",
+            video_job_id=video_job_id,
+            success_count=success_count,
+            total_count=len(scene_ids),
+            mode="frame_chaining",
+        )
+
+        return {
+            "success": success_count == len(scene_ids),
+            "video_job_id": video_job_id,
+            "results": results,
+            "success_count": success_count,
+            "total_count": len(scene_ids),
+        }
+
+    # Standard generation (no Ralph loop, no frame chaining) - staggered to avoid rate limits
     rate_limit_seconds = settings.video_gen_rate_limit_seconds
 
     logger.info(
