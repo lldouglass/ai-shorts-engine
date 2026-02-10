@@ -523,7 +523,26 @@ def render_final_video_task(
             # Store the final video asset
             storage = StorageService()
 
-            if output_url and output_url.startswith("http"):
+            if result.output_path and result.output_path.exists():
+                # Local file output (MoviePy, etc.) — read bytes and store
+                local_bytes = result.output_path.read_bytes()
+                stored = run_async(
+                    storage.store_bytes(
+                        data=local_bytes,
+                        asset_type="final_video",
+                        video_job_id=job_uuid,
+                        metadata={
+                            "provider": provider.name,
+                            "source_path": str(result.output_path),
+                        },
+                    )
+                )
+                # Update output_url to point to stored location
+                if stored.url:
+                    output_url = stored.url
+                elif stored.file_path:
+                    output_url = f"file://{stored.file_path}"
+            elif output_url and output_url.startswith("http"):
                 # Download and store from URL
                 stored = run_async(
                     storage.store_from_url(

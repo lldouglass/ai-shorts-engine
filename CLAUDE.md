@@ -31,6 +31,7 @@ The system should:
 ```
 
 The learning loop should:
+- Generate entire short form videos including the voice over script and the video idea. 
 - Track performance by style preset, topic, hook type, length, posting time
 - Build a feedback dataset linking content features → engagement outcomes
 - Use this data to inform LLM prompts and generation parameters

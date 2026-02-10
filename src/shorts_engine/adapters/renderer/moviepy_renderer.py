@@ -2,11 +2,21 @@
 
 Uses MoviePy 2.x (which bundles ffmpeg via imageio_ffmpeg) for local video
 composition and rendering without requiring external cloud services.
+
+Features:
+- Crossfade transitions between clips
+- TikTok-style burned-in captions (white text, black stroke)
+- Voiceover + background music mixing
+- Cover-resize (scale + center-crop) for 1080x1920 vertical output
+- Ken Burns effects on images
 """
 
+import os
+import platform
 import tempfile
 from pathlib import Path
 from typing import Any
+from urllib.parse import unquote, urlparse
 from uuid import uuid4
 
 import httpx
@@ -27,7 +37,9 @@ try:
         CompositeAudioClip,
         CompositeVideoClip,
         ImageClip,
+        TextClip,
         VideoFileClip,
+        concatenate_audioclips,
         concatenate_videoclips,
     )
 
@@ -35,16 +47,20 @@ try:
 except ImportError:
     MOVIEPY_AVAILABLE = False
 
+CROSSFADE_DURATION = 0.4
+BACKGROUND_MUSIC_VOLUME = 0.3
+
 
 class MoviePyRenderer(RendererProvider):
     """Local video renderer using MoviePy (bundled ffmpeg).
 
     This renderer provides local video composition capabilities without
     requiring cloud services like Creatomate. It supports:
-    - Concatenating video clips
+    - Concatenating video clips with crossfade transitions
+    - TikTok-style burned-in captions
     - Adding voiceover and background music
     - Ken Burns effects on images
-    - Burned-in captions
+    - Cover-resize to fill target dimensions
     """
 
     def __init__(
@@ -145,6 +161,9 @@ class MoviePyRenderer(RendererProvider):
     ) -> RenderResult:
         """Render a composition by concatenating video clips.
 
+        Builds video track with crossfade transitions, burns in captions,
+        mixes voiceover + background music, and writes final mp4.
+
         Args:
             request: Extended render request with scene clips.
 
@@ -176,13 +195,51 @@ class MoviePyRenderer(RendererProvider):
                 if clip.duration > scene.duration_seconds:
                     clip = clip.subclipped(0, scene.duration_seconds)
 
-                # Skip captions for now (font issues on Windows)
-                # Can be added back with proper font handling
+                # Cover-resize to fill target dimensions
+                clip = self._resize_cover(clip, request.width, request.height)
 
                 video_clips.append(clip)
 
-            # Concatenate all clips
-            final_video = concatenate_videoclips(video_clips, method="compose")
+            # Apply crossfade transitions
+            if len(video_clips) > 1:
+                crossfade = min(
+                    CROSSFADE_DURATION, min(c.duration for c in video_clips) / 2
+                )
+                staggered: list[Any] = []
+                current_start = 0.0
+
+                for j, clip in enumerate(video_clips):
+                    if j == 0:
+                        clip = clip.with_effects([lambda c: c.crossfadeout(crossfade)])
+                    elif j == len(video_clips) - 1:
+                        clip = clip.with_effects([lambda c: c.crossfadein(crossfade)])
+                    else:
+                        clip = clip.with_effects([
+                            lambda c: c.crossfadein(crossfade),
+                            lambda c: c.crossfadeout(crossfade),
+                        ])
+
+                    clip = clip.with_start(current_start)
+                    staggered.append(clip)
+                    current_start += clip.duration - crossfade
+
+                final_video = CompositeVideoClip(
+                    staggered, size=(request.width, request.height)
+                )
+            else:
+                final_video = video_clips[0] if video_clips else None
+                if final_video is None:
+                    raise ValueError("No video clips loaded")
+
+            # Build and add caption overlay clips
+            caption_clips = self._build_caption_clips(
+                request.scenes, request.width, request.height
+            )
+            if caption_clips:
+                final_video = CompositeVideoClip(
+                    [final_video] + caption_clips,
+                    size=(request.width, request.height),
+                )
 
             # Handle audio tracks
             audio_clips = []
@@ -195,7 +252,6 @@ class MoviePyRenderer(RendererProvider):
 
                 # Handle voiceover duration mismatch with video
                 if voiceover.duration > final_video.duration:
-                    # Voiceover longer than video - clip it
                     logger.warning(
                         "voiceover_clipped",
                         voiceover_duration=voiceover.duration,
@@ -203,8 +259,6 @@ class MoviePyRenderer(RendererProvider):
                     )
                     voiceover = voiceover.subclipped(0, final_video.duration)
                 elif voiceover.duration < final_video.duration - 5:
-                    # Voiceover significantly shorter (>5s gap) - log warning
-                    # The remaining video will have silence, which may be intentional
                     logger.warning(
                         "voiceover_shorter_than_video",
                         voiceover_duration=voiceover.duration,
@@ -214,19 +268,20 @@ class MoviePyRenderer(RendererProvider):
 
                 audio_clips.append(voiceover)
 
-            # Add background music (reduced volume)
+            # Add background music (reduced volume with fade-out)
             if request.background_music_url:
                 music_path = await self._download_file(request.background_music_url, "music")
                 temp_files.append(music_path)
                 music = AudioFileClip(str(music_path))
                 # Loop if shorter than video
                 if music.duration < final_video.duration:
-                    music = music.with_effects(
-                        [lambda clip: clip.loop(duration=final_video.duration)]
-                    )
-                else:
-                    music = music.subclipped(0, final_video.duration)
+                    repeats = int(final_video.duration / music.duration) + 1
+                    music = concatenate_audioclips([music] * repeats)
+                music = music.subclipped(0, final_video.duration)
                 music = music.with_volume_scaled(request.background_music_volume)
+                # Add 2-second fade-out
+                fade_duration = min(2.0, final_video.duration / 4)
+                music = music.audio_fadeout(fade_duration)
                 audio_clips.append(music)
 
             # Composite audio tracks
@@ -234,21 +289,35 @@ class MoviePyRenderer(RendererProvider):
                 final_audio = CompositeAudioClip(audio_clips)
                 final_video = final_video.with_audio(final_audio)
 
-            # Resize to target dimensions
-            final_video = final_video.resized(new_size=(request.width, request.height))
-
             # Store duration before writing (close may clear it)
             duration = final_video.duration
 
-            # Write output
-            output_path = self.output_dir / f"composition_{uuid4().hex}.mp4"
+            # Write output to storage/final for persistence
+            output_dir = Path("storage/final")
+            output_dir.mkdir(parents=True, exist_ok=True)
+
+            tmp_fd, tmp_path = tempfile.mkstemp(suffix=".mp4", dir=str(output_dir))
+            os.close(tmp_fd)
+
+            logger.info(
+                "moviepy_writing_video",
+                output_path=tmp_path,
+                duration=duration,
+                size=f"{request.width}x{request.height}",
+            )
+
             final_video.write_videofile(
-                str(output_path),
+                tmp_path,
                 fps=request.fps,
                 codec=self.codec,
                 audio_codec=self.audio_codec,
+                bitrate="8M",
+                preset="medium",
+                threads=4,
                 logger=None,
             )
+
+            output_path = Path(tmp_path)
 
             # Cleanup
             final_video.close()
@@ -270,7 +339,14 @@ class MoviePyRenderer(RendererProvider):
                 output_path=output_path,
                 file_size_bytes=output_path.stat().st_size,
                 duration_seconds=duration,
-                metadata={"provider": self.name, "url": f"file://{output_path}"},
+                metadata={
+                    "provider": self.name,
+                    "url": output_path.as_uri(),
+                    "codec": "h264",
+                    "audio_codec": "aac",
+                    "bitrate": "8M",
+                    "fps": request.fps,
+                },
             )
 
         except Exception as e:
@@ -323,8 +399,6 @@ class MoviePyRenderer(RendererProvider):
                     img_scene.motion.pan_y_end,
                 )
 
-                # Skip captions for now (font issues on Windows)
-
                 video_clips.append(clip)
 
             # Concatenate with transitions
@@ -338,7 +412,6 @@ class MoviePyRenderer(RendererProvider):
                 temp_files.append(voiceover_path)
                 voiceover = AudioFileClip(str(voiceover_path))
 
-                # Handle voiceover duration mismatch with video
                 if voiceover.duration > final_video.duration:
                     logger.warning(
                         "voiceover_clipped",
@@ -361,9 +434,9 @@ class MoviePyRenderer(RendererProvider):
                 temp_files.append(music_path)
                 music = AudioFileClip(str(music_path))
                 if music.duration < final_video.duration:
-                    pass  # Skip looping for now
-                else:
-                    music = music.subclipped(0, final_video.duration)
+                    repeats = int(final_video.duration / music.duration) + 1
+                    music = concatenate_audioclips([music] * repeats)
+                music = music.subclipped(0, final_video.duration)
                 music = music.with_volume_scaled(request.background_music_volume)
                 audio_clips.append(music)
 
@@ -410,6 +483,98 @@ class MoviePyRenderer(RendererProvider):
         except Exception as e:
             logger.error("moviepy_image_composition_error", error=str(e))
             return RenderResult(success=False, error_message=str(e))
+
+    @staticmethod
+    def _resolve_path(url: str) -> str:
+        """Convert a file:// URL or raw path to a local filesystem path.
+
+        Handles:
+        - file:///absolute/path -> /absolute/path
+        - file:///C:/Windows/path -> C:/Windows/path
+        - /raw/path -> /raw/path (returned as-is)
+        """
+        if not url.startswith("file://"):
+            return url
+
+        parsed = urlparse(url)
+        path = unquote(parsed.path)
+
+        # On Windows, file:///C:/foo -> parsed.path is /C:/foo
+        # Strip the leading slash before the drive letter
+        if platform.system() == "Windows" and len(path) >= 3 and path[0] == "/" and path[2] == ":":
+            path = path[1:]
+
+        return path
+
+    @staticmethod
+    def _resize_cover(clip: Any, target_w: int, target_h: int) -> Any:
+        """Scale and center-crop a clip to exactly fill target dimensions.
+
+        Similar to CSS 'object-fit: cover' — scales up to cover the target
+        area, then center-crops any overflow.
+        """
+        cw, ch = clip.size
+        scale = max(target_w / cw, target_h / ch)
+        clip = clip.resized(scale)
+
+        sw, sh = clip.size
+        if sw != target_w or sh != target_h:
+            x1 = (sw - target_w) // 2
+            y1 = (sh - target_h) // 2
+            clip = clip.cropped(x1=x1, y1=y1, width=target_w, height=target_h)
+
+        return clip
+
+    @staticmethod
+    def _build_caption_clips(
+        scenes: list[Any],
+        w: int,
+        h: int,
+    ) -> list[Any]:
+        """Create TikTok-style caption TextClips for each scene.
+
+        Captions are white uppercase text with a black stroke, positioned
+        at 82% vertical height. Returns empty list if TextClip is unavailable.
+        """
+        if not MOVIEPY_AVAILABLE:
+            return []
+
+        try:
+            # Test that TextClip works (requires ImageMagick)
+            TextClip
+        except Exception:
+            return []
+
+        captions: list[Any] = []
+        current_time = 0.0
+        crossfade = CROSSFADE_DURATION if len(scenes) > 1 else 0.0
+
+        for scene in scenes:
+            if scene.caption_text:
+                try:
+                    txt = TextClip(
+                        text=scene.caption_text.upper(),
+                        font_size=60,
+                        color="white",
+                        font="Liberation-Sans-Bold",
+                        stroke_color="black",
+                        stroke_width=3,
+                        method="caption",
+                        size=(int(w * 0.9), None),
+                        text_align="center",
+                    )
+                    txt = (
+                        txt.with_position(("center", int(h * 0.82)))
+                        .with_start(current_time)
+                        .with_duration(scene.duration_seconds)
+                    )
+                    captions.append(txt)
+                except Exception as e:
+                    logger.debug("caption_skipped", error=str(e))
+
+            current_time += scene.duration_seconds - crossfade
+
+        return captions
 
     def _create_ken_burns_clip(
         self,
@@ -489,31 +654,10 @@ class MoviePyRenderer(RendererProvider):
         # Apply the Ken Burns transformation using transform
         return img_clip.transform(make_frame)
 
-    def _create_caption_clip(
-        self,
-        text: str,
-        duration: float,
-        width: int,
-    ) -> Any:
-        """Create a caption text clip.
-
-        Note: Currently disabled due to font issues on Windows.
-        To enable, install ImageMagick and ensure fonts are available.
-
-        Args:
-            text: Caption text.
-            duration: Duration in seconds.
-            width: Video width for text sizing.
-
-        Returns:
-            TextClip with caption styling or None if unavailable.
-        """
-        # TextClip requires ImageMagick which isn't always available
-        # Return None and skip captions for now
-        return None
-
     async def _download_file(self, url: str, prefix: str) -> Path:
         """Download a file from URL to temp directory.
+
+        Handles file:// URLs by returning the local path directly.
 
         Args:
             url: Source URL.
@@ -524,7 +668,7 @@ class MoviePyRenderer(RendererProvider):
         """
         # Handle file:// URLs
         if url.startswith("file://"):
-            return Path(url[7:])
+            return Path(self._resolve_path(url))
 
         # Determine extension from URL
         ext = ".mp4"

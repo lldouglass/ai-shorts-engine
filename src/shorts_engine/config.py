@@ -58,10 +58,10 @@ class Settings(BaseSettings):
     )
     renderer_provider: str = Field(
         default="stub",
-        description="Rendering provider (stub, creatomate, ffmpeg)",
+        description="Rendering provider (stub, creatomate, moviepy)",
     )
 
-    # FFmpeg settings (for renderer_provider=ffmpeg)
+    # FFmpeg settings (for renderer_provider=moviepy)
     ffmpeg_path: str | None = Field(
         default=None,
         description="Path to FFmpeg binary (uses 'ffmpeg' from PATH if not specified)",
