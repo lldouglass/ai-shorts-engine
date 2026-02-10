@@ -25,7 +25,7 @@ from shorts_engine.adapters.video_gen.base import VideoGenProvider, VideoGenRequ
 from shorts_engine.adapters.video_gen.luma import LumaProvider
 from shorts_engine.adapters.video_gen.stub import StubVideoGenProvider
 from shorts_engine.config import settings
-from shorts_engine.db.models import AssetModel, PromptModel, SceneModel, VideoJobModel
+from shorts_engine.db.models import AssetModel, PromptModel, SceneModel, StoryModel, VideoJobModel
 from shorts_engine.db.session import get_session_context
 from shorts_engine.domain.enums import QACheckType, QAStage, QAStatus
 from shorts_engine.logging import get_logger
@@ -999,6 +999,50 @@ def run_full_pipeline_task(
                 stage="created",
             )
             session.add(job)
+            session.flush()  # Get the job ID before story generation
+
+            # Generate a story from the idea so the render pipeline has
+            # a proper narration script instead of falling back to caption beats.
+            try:
+                from shorts_engine.services.story_generator import StoryGenerator
+
+                generator = StoryGenerator()
+                story = run_async(generator.generate(idea))
+
+                story_model = StoryModel(
+                    id=uuid4(),
+                    project_id=project_uuid,
+                    topic=idea,
+                    title=story.title,
+                    narrative_text=story.narrative_text,
+                    narrative_style=story.narrative_style,
+                    suggested_preset=story.suggested_preset,
+                    word_count=story.word_count,
+                    estimated_duration_seconds=story.estimated_duration_seconds,
+                    status="approved",
+                )
+                session.add(story_model)
+                session.flush()
+
+                job.story_id = story_model.id
+                job.idea = story.narrative_text  # Full narrative replaces short idea
+                if not style_preset:
+                    job.style_preset = story.suggested_preset
+
+                logger.info(
+                    "full_pipeline_story_generated",
+                    video_job_id=str(job.id),
+                    story_id=str(story_model.id),
+                    word_count=story.word_count,
+                )
+            except Exception:
+                logger.warning(
+                    "full_pipeline_story_generation_failed",
+                    video_job_id=str(job.id),
+                    exc_info=True,
+                )
+                # Continue without a story — pipeline falls back to caption beats
+
             session.commit()
             video_job_id = str(job.id)
             logger.info("full_pipeline_job_created", video_job_id=video_job_id)

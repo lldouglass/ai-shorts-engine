@@ -21,17 +21,18 @@ class EdgeTTSProvider(VoiceoverProvider):
     Good quality for a free option, supports many languages and voices.
     """
 
-    # Popular English voices
+    # Popular English voices (Multilingual Neural voices for higher quality)
     DEFAULT_VOICES = {
-        "narrator": "en-US-GuyNeural",  # Male narrator
-        "narrator_female": "en-US-JennyNeural",  # Female narrator
-        "dramatic": "en-US-ChristopherNeural",  # Dramatic male
+        "narrator": "en-US-AndrewMultilingualNeural",  # Deep, natural male narrator
+        "narrator_female": "en-US-AvaMultilingualNeural",  # Natural female narrator
+        "dramatic": "en-US-DavisNeural",  # Deep dramatic male
+        "thriller": "en-US-AndrewMultilingualNeural",  # Deep voice, good for dark content
         "energetic": "en-US-AriaNeural",  # Energetic female
-        "british": "en-GB-RyanNeural",  # British male
-        "australian": "en-AU-WilliamNeural",  # Australian male
+        "mysterious": "en-GB-RyanNeural",  # British accent for mystery
+        "calm_tension": "en-US-BrandonMultilingualNeural",  # Calm but intense
     }
 
-    def __init__(self, default_voice: str = "en-US-GuyNeural") -> None:
+    def __init__(self, default_voice: str = "en-US-AndrewMultilingualNeural") -> None:
         self.default_voice = default_voice
 
     @property

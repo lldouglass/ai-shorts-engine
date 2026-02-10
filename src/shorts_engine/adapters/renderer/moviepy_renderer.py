@@ -39,8 +39,10 @@ try:
         ImageClip,
         TextClip,
         VideoFileClip,
+        afx,
         concatenate_audioclips,
         concatenate_videoclips,
+        vfx,
     )
 
     MOVIEPY_AVAILABLE = True
@@ -186,8 +188,9 @@ class MoviePyRenderer(RendererProvider):
 
             for i, scene in enumerate(request.scenes):
                 logger.debug("downloading_scene_clip", scene_number=i + 1)
-                clip_path = await self._download_file(scene.video_url, f"clip_{i}")
-                temp_files.append(clip_path)
+                clip_path, is_temp = await self._download_file(scene.video_url, f"clip_{i}")
+                if is_temp:
+                    temp_files.append(clip_path)
 
                 clip = VideoFileClip(str(clip_path))
 
@@ -210,13 +213,13 @@ class MoviePyRenderer(RendererProvider):
 
                 for j, clip in enumerate(video_clips):
                     if j == 0:
-                        clip = clip.with_effects([lambda c: c.crossfadeout(crossfade)])
+                        clip = clip.with_effects([vfx.CrossFadeOut(crossfade)])
                     elif j == len(video_clips) - 1:
-                        clip = clip.with_effects([lambda c: c.crossfadein(crossfade)])
+                        clip = clip.with_effects([vfx.CrossFadeIn(crossfade)])
                     else:
                         clip = clip.with_effects([
-                            lambda c: c.crossfadein(crossfade),
-                            lambda c: c.crossfadeout(crossfade),
+                            vfx.CrossFadeIn(crossfade),
+                            vfx.CrossFadeOut(crossfade),
                         ])
 
                     clip = clip.with_start(current_start)
@@ -246,8 +249,11 @@ class MoviePyRenderer(RendererProvider):
 
             # Add voiceover
             if request.voiceover_url:
-                voiceover_path = await self._download_file(request.voiceover_url, "voiceover")
-                temp_files.append(voiceover_path)
+                voiceover_path, is_temp = await self._download_file(
+                    request.voiceover_url, "voiceover"
+                )
+                if is_temp:
+                    temp_files.append(voiceover_path)
                 voiceover = AudioFileClip(str(voiceover_path))
 
                 # Handle voiceover duration mismatch with video
@@ -270,8 +276,11 @@ class MoviePyRenderer(RendererProvider):
 
             # Add background music (reduced volume with fade-out)
             if request.background_music_url:
-                music_path = await self._download_file(request.background_music_url, "music")
-                temp_files.append(music_path)
+                music_path, is_temp = await self._download_file(
+                    request.background_music_url, "music"
+                )
+                if is_temp:
+                    temp_files.append(music_path)
                 music = AudioFileClip(str(music_path))
                 # Loop if shorter than video
                 if music.duration < final_video.duration:
@@ -281,7 +290,7 @@ class MoviePyRenderer(RendererProvider):
                 music = music.with_volume_scaled(request.background_music_volume)
                 # Add 2-second fade-out
                 fade_duration = min(2.0, final_video.duration / 4)
-                music = music.audio_fadeout(fade_duration)
+                music = music.with_effects([afx.AudioFadeOut(fade_duration)])
                 audio_clips.append(music)
 
             # Composite audio tracks
@@ -382,8 +391,9 @@ class MoviePyRenderer(RendererProvider):
                 logger.debug("processing_image", image_number=i + 1)
 
                 # Download image
-                img_path = await self._download_file(img_scene.image_url, f"img_{i}")
-                temp_files.append(img_path)
+                img_path, is_temp = await self._download_file(img_scene.image_url, f"img_{i}")
+                if is_temp:
+                    temp_files.append(img_path)
 
                 # Create image clip with Ken Burns effect
                 clip = self._create_ken_burns_clip(
@@ -408,8 +418,11 @@ class MoviePyRenderer(RendererProvider):
             audio_clips = []
 
             if request.voiceover_url:
-                voiceover_path = await self._download_file(request.voiceover_url, "voiceover")
-                temp_files.append(voiceover_path)
+                voiceover_path, is_temp = await self._download_file(
+                    request.voiceover_url, "voiceover"
+                )
+                if is_temp:
+                    temp_files.append(voiceover_path)
                 voiceover = AudioFileClip(str(voiceover_path))
 
                 if voiceover.duration > final_video.duration:
@@ -430,8 +443,11 @@ class MoviePyRenderer(RendererProvider):
                 audio_clips.append(voiceover)
 
             if request.background_music_url:
-                music_path = await self._download_file(request.background_music_url, "music")
-                temp_files.append(music_path)
+                music_path, is_temp = await self._download_file(
+                    request.background_music_url, "music"
+                )
+                if is_temp:
+                    temp_files.append(music_path)
                 music = AudioFileClip(str(music_path))
                 if music.duration < final_video.duration:
                     repeats = int(final_video.duration / music.duration) + 1
@@ -654,21 +670,27 @@ class MoviePyRenderer(RendererProvider):
         # Apply the Ken Burns transformation using transform
         return img_clip.transform(make_frame)
 
-    async def _download_file(self, url: str, prefix: str) -> Path:
+    async def _download_file(self, url: str, prefix: str) -> tuple[Path, bool]:
         """Download a file from URL to temp directory.
 
-        Handles file:// URLs by returning the local path directly.
+        Handles file:// URLs and raw local paths by returning them directly.
 
         Args:
             url: Source URL.
             prefix: Filename prefix.
 
         Returns:
-            Path to downloaded file.
+            Tuple of (path, is_temp) — is_temp=True if the file was downloaded
+            and should be cleaned up after use.
         """
         # Handle file:// URLs
         if url.startswith("file://"):
-            return Path(self._resolve_path(url))
+            return Path(self._resolve_path(url)), False
+
+        # Handle raw local paths (no scheme)
+        local_path = Path(url)
+        if local_path.exists():
+            return local_path, False
 
         # Determine extension from URL
         ext = ".mp4"
@@ -683,12 +705,12 @@ class MoviePyRenderer(RendererProvider):
 
         output_path = self.output_dir / f"{prefix}_{uuid4().hex}{ext}"
 
-        async with httpx.AsyncClient(timeout=120.0) as client:
+        async with httpx.AsyncClient(timeout=120.0, follow_redirects=True) as client:
             response = await client.get(url)
             response.raise_for_status()
             output_path.write_bytes(response.content)
 
-        return output_path
+        return output_path, True
 
     async def get_video_info(self, video_path: Path) -> dict[str, Any]:
         """Get information about a video file.

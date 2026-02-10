@@ -380,10 +380,13 @@ def render_final_video_task(
                 if not img_asset:
                     raise ValueError(f"No image found for scene {scene.scene_number}")
 
-                # Get URL for the image
-                img_url = img_asset.url
-                if not img_url and img_asset.file_path:
-                    img_url = f"file://{img_asset.file_path}"
+                # Get URL for the image — prefer local file for local renderers
+                if img_asset.file_path and settings.renderer_provider == "moviepy":
+                    img_url = str(img_asset.file_path)
+                else:
+                    img_url = img_asset.url
+                    if not img_url and img_asset.file_path:
+                        img_url = f"file://{img_asset.file_path}"
 
                 if not img_url:
                     raise ValueError(f"No URL available for scene {scene.scene_number} image")
@@ -427,10 +430,13 @@ def render_final_video_task(
                 if not clip_asset:
                     raise ValueError(f"No video clip found for scene {scene.scene_number}")
 
-                # Get URL for the clip
-                clip_url = clip_asset.url
-                if not clip_url and clip_asset.file_path:
-                    clip_url = f"file://{clip_asset.file_path}"
+                # Get URL for the clip — prefer local file for local renderers
+                if clip_asset.file_path and settings.renderer_provider == "moviepy":
+                    clip_url = str(clip_asset.file_path)
+                else:
+                    clip_url = clip_asset.url
+                    if not clip_url and clip_asset.file_path:
+                        clip_url = f"file://{clip_asset.file_path}"
 
                 if not clip_url:
                     raise ValueError(f"No URL available for scene {scene.scene_number} clip")
@@ -446,6 +452,8 @@ def render_final_video_task(
 
         # Get voiceover URL if available
         voiceover_url = None
+        use_local = settings.renderer_provider == "moviepy"
+
         if (
             voiceover_result
             and voiceover_result.get("success")
@@ -464,7 +472,14 @@ def render_final_video_task(
             ).scalar_one_or_none()
 
             if voiceover_asset:
-                voiceover_url = voiceover_asset.url or f"file://{voiceover_asset.file_path}"
+                if use_local and voiceover_asset.file_path:
+                    voiceover_url = str(voiceover_asset.file_path)
+                else:
+                    voiceover_url = voiceover_asset.url or f"file://{voiceover_asset.file_path}"
+
+        # For local renderers, strip file:// prefix to use raw path
+        if use_local and voiceover_url and voiceover_url.startswith("file://"):
+            voiceover_url = voiceover_url[len("file://"):]
 
         try:
             from shorts_engine.adapters.renderer.moviepy_renderer import MoviePyRenderer

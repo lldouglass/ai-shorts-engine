@@ -83,7 +83,7 @@ class Settings(BaseSettings):
         description="Voiceover provider (stub, elevenlabs, edge_tts)",
     )
     voiceover_default_voice: str = Field(
-        default="narrator",  # Rachel - calm, professional narrator voice
+        default="dramatic",  # DavisNeural - deep dramatic voice for thriller content
         description="Default voice for voiceover (narrator, dramatic, thriller, mysterious, calm_tension)",
     )
 
