@@ -88,7 +88,7 @@ class KlingProvider(VideoGenProvider):
             model = self.FAL_MODEL_IMG2VID
             arguments: dict[str, Any] = {
                 "prompt": full_prompt,
-                "image_url": image_url,
+                "start_image_url": image_url,
                 "duration": duration,
                 "aspect_ratio": aspect_ratio,
                 "negative_prompt": negative_prompt,

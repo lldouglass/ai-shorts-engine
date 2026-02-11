@@ -10,8 +10,11 @@ T = TypeVar("T")
 def run_async(coro: Coroutine[Any, Any, T]) -> T:
     """Run an async coroutine in a sync context.
 
-    Creates a new event loop, runs the coroutine to completion,
-    and properly cleans up the loop.
+    Reuses the current event loop if available, otherwise creates a new one.
+    The loop is NOT closed after use because async libraries (e.g. fal_client,
+    httpx) cache internal clients bound to a specific loop. Closing the loop
+    between sequential calls within the same Celery task causes
+    "Event loop is closed" errors.
 
     Args:
         coro: The coroutine to execute.
@@ -19,8 +22,12 @@ def run_async(coro: Coroutine[Any, Any, T]) -> T:
     Returns:
         The result of the coroutine.
     """
-    loop = asyncio.new_event_loop()
     try:
-        return loop.run_until_complete(coro)
-    finally:
-        loop.close()
+        loop = asyncio.get_event_loop()
+        if loop.is_closed():
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+    except RuntimeError:
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+    return loop.run_until_complete(coro)

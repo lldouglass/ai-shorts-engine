@@ -212,7 +212,7 @@ class TestKlingImageToVideo:
             KlingProvider.FAL_MODEL_IMG2VID,
             arguments={
                 "prompt": "A forest path continuing",
-                "image_url": "https://fal.media/uploads/ref.jpg",
+                "start_image_url": "https://fal.media/uploads/ref.jpg",
                 "duration": "5",
                 "aspect_ratio": "9:16",
                 "negative_prompt": "blur, distort, low quality",

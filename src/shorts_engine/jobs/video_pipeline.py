@@ -634,6 +634,8 @@ def generate_scene_clip_task(
 @celery_app.task(
     bind=True,
     name="pipeline.generate_all_scenes",
+    soft_time_limit=1800,  # 30 min soft limit (sequential frame chaining ~75s/scene)
+    time_limit=1860,  # 31 min hard limit
 )
 def generate_all_scenes_task(
     _self: Any,  # noqa: ARG001
@@ -953,19 +955,32 @@ def verify_assets_task(
 )
 def mark_ready_for_render_task(
     self: Any,  # noqa: ARG001
-    video_job_id: str,
+    video_job_id_or_result: str | dict[str, Any],
     verification_result: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Mark a video job as ready for rendering.
 
+    When called from a Celery chain, the first arg may be the verification
+    result dict (from verify_assets_task) rather than a video_job_id string.
+
     Args:
-        video_job_id: UUID of the video job
-        verification_result: Optional result from verify_assets
+        video_job_id_or_result: Either a video job UUID string or the
+            verification result dict (which contains video_job_id).
+        verification_result: Optional result from verify_assets (used when
+            called directly with video_job_id as first arg).
 
     Returns:
         Dict with final status
     """
     task_id = self.request.id
+
+    # Handle chain: verify_assets returns a dict as first positional arg
+    if isinstance(video_job_id_or_result, dict):
+        verification_result = video_job_id_or_result
+        video_job_id = video_job_id_or_result["video_job_id"]
+    else:
+        video_job_id = video_job_id_or_result
+
     job_uuid = UUID(video_job_id)
 
     logger.info("mark_ready_started", task_id=task_id, video_job_id=video_job_id)
@@ -1182,6 +1197,8 @@ def run_full_pipeline_task(
 @celery_app.task(
     bind=True,
     name="pipeline.generate_all_scenes_from_plan",
+    soft_time_limit=1800,
+    time_limit=1860,
 )
 def generate_all_scenes_from_plan(
     _self: Any,  # noqa: ARG001
@@ -1191,6 +1208,8 @@ def generate_all_scenes_from_plan(
     """Extract scene IDs from plan result and trigger generation.
 
     This is a bridge task between planning and generation stages.
+    Calls generate_all_scenes_task inline to avoid the Celery
+    result.get()-within-a-task bug.
     """
     if not plan_result.get("success"):
         raise RuntimeError(f"Planning failed: {plan_result.get('error', 'Unknown error')}")
@@ -1199,11 +1218,11 @@ def generate_all_scenes_from_plan(
     if not scene_ids:
         raise RuntimeError("No scenes in plan result")
 
-    # Dispatch generation for all scenes
-    result = generate_all_scenes_task.apply_async(args=[video_job_id, scene_ids])
+    # Call generation inline (not as sub-task) to avoid result.get() deadlock
+    gen_result = generate_all_scenes_task(video_job_id, scene_ids)
 
-    # Wait for completion
-    result.get(timeout=3600)
+    if not gen_result.get("success"):
+        raise RuntimeError(f"Scene generation failed: {gen_result.get('error', 'Unknown error')}")
 
     # Return video_job_id for next stage
     return video_job_id
