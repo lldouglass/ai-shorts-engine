@@ -25,7 +25,7 @@ class EdgeTTSProvider(VoiceoverProvider):
     DEFAULT_VOICES = {
         "narrator": "en-US-AndrewMultilingualNeural",  # Deep, natural male narrator
         "narrator_female": "en-US-AvaMultilingualNeural",  # Natural female narrator
-        "dramatic": "en-US-DavisNeural",  # Deep dramatic male
+        "dramatic": "en-US-GuyNeural",  # Deep dramatic male
         "thriller": "en-US-AndrewMultilingualNeural",  # Deep voice, good for dark content
         "energetic": "en-US-AriaNeural",  # Energetic female
         "mysterious": "en-GB-RyanNeural",  # British accent for mystery

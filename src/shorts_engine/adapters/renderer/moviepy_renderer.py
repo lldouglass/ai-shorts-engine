@@ -129,7 +129,7 @@ class MoviePyRenderer(RendererProvider):
                 clip = clip.with_audio(audio)
 
             # Store duration before closing
-            duration = clip.duration
+            duration = float(clip.duration)
 
             # Output
             output_path = self.output_dir / f"output_{uuid4().hex}.mp4"
@@ -258,12 +258,23 @@ class MoviePyRenderer(RendererProvider):
 
                 # Handle voiceover duration mismatch with video
                 if voiceover.duration > final_video.duration:
-                    logger.warning(
-                        "voiceover_clipped",
+                    overflow = voiceover.duration - final_video.duration
+                    logger.info(
+                        "extending_video_for_voiceover",
                         voiceover_duration=voiceover.duration,
                         video_duration=final_video.duration,
+                        overflow=overflow,
                     )
-                    voiceover = voiceover.subclipped(0, final_video.duration)
+                    # Freeze the last frame to let the narration finish
+                    last_frame = final_video.get_frame(final_video.duration - 0.01)
+                    freeze = (
+                        ImageClip(last_frame)
+                        .with_duration(overflow)
+                        .with_effects([vfx.CrossFadeIn(min(0.5, overflow))])
+                    )
+                    final_video = concatenate_videoclips(
+                        [final_video, freeze], method="compose"
+                    )
                 elif voiceover.duration < final_video.duration - 5:
                     logger.warning(
                         "voiceover_shorter_than_video",
@@ -299,7 +310,8 @@ class MoviePyRenderer(RendererProvider):
                 final_video = final_video.with_audio(final_audio)
 
             # Store duration before writing (close may clear it)
-            duration = final_video.duration
+            # Convert numpy float to Python float for DB compatibility
+            duration = float(final_video.duration)
 
             # Write output to storage/final for persistence
             output_dir = Path("storage/final")
@@ -426,12 +438,22 @@ class MoviePyRenderer(RendererProvider):
                 voiceover = AudioFileClip(str(voiceover_path))
 
                 if voiceover.duration > final_video.duration:
-                    logger.warning(
-                        "voiceover_clipped",
+                    overflow = voiceover.duration - final_video.duration
+                    logger.info(
+                        "extending_video_for_voiceover",
                         voiceover_duration=voiceover.duration,
                         video_duration=final_video.duration,
+                        overflow=overflow,
                     )
-                    voiceover = voiceover.subclipped(0, final_video.duration)
+                    last_frame = final_video.get_frame(final_video.duration - 0.01)
+                    freeze = (
+                        ImageClip(last_frame)
+                        .with_duration(overflow)
+                        .with_effects([vfx.CrossFadeIn(min(0.5, overflow))])
+                    )
+                    final_video = concatenate_videoclips(
+                        [final_video, freeze], method="compose"
+                    )
                 elif voiceover.duration < final_video.duration - 5:
                     logger.warning(
                         "voiceover_shorter_than_video",
@@ -461,7 +483,7 @@ class MoviePyRenderer(RendererProvider):
                 final_video = final_video.with_audio(final_audio)
 
             # Store duration before writing
-            duration = final_video.duration
+            duration = float(final_video.duration)
 
             # Write output
             output_path = self.output_dir / f"image_composition_{uuid4().hex}.mp4"

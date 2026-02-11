@@ -276,6 +276,8 @@ def generate_voiceover_task(
     autoretry_for=(Exception,),
     retry_backoff=True,
     retry_backoff_max=600,
+    soft_time_limit=1800,
+    time_limit=1860,
 )
 def render_final_video_task(
     self: Any,  # noqa: ARG001
