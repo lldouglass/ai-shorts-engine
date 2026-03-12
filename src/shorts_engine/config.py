@@ -87,6 +87,50 @@ class Settings(BaseSettings):
         description="Default voice for voiceover (narrator, dramatic, thriller, mysterious, calm_tension)",
     )
 
+    # Background music defaults
+    background_music_enabled: bool = Field(
+        default=True,
+        description="Enable default background music bed during rendering when a track is configured",
+    )
+    background_music_default_url: str | None = Field(
+        default="ambient_pad.wav",
+        description="Default background music URL/path used when none is provided",
+    )
+    background_music_default_volume: float = Field(
+        default=0.12,
+        description="Default background music volume (0.0-1.0), tuned to sit under narration",
+    )
+    background_music_fade_in_seconds: float = Field(
+        default=0.35,
+        description="Fade-in duration for background music bed",
+    )
+    background_music_fade_out_seconds: float = Field(
+        default=1.5,
+        description="Fade-out duration for background music bed",
+    )
+    background_music_ducked_max_volume: float = Field(
+        default=0.15,
+        description="Maximum background music volume when narration is present",
+    )
+
+    # Subtitle chunking defaults (audio-first caption readability)
+    subtitle_chunk_min_words: int = Field(
+        default=3,
+        description="Minimum words per subtitle phrase chunk",
+    )
+    subtitle_chunk_max_words: int = Field(
+        default=7,
+        description="Maximum words per subtitle phrase chunk",
+    )
+    subtitle_chunk_min_seconds: float = Field(
+        default=0.6,
+        description="Minimum subtitle chunk on-screen duration",
+    )
+    subtitle_chunk_max_seconds: float = Field(
+        default=2.8,
+        description="Maximum subtitle chunk on-screen duration",
+    )
+
     # Platform Publishing
     publisher_youtube_enabled: bool = Field(default=False, description="Enable YouTube publishing")
     publisher_tiktok_enabled: bool = Field(default=False, description="Enable TikTok publishing")
@@ -144,6 +188,13 @@ class Settings(BaseSettings):
     fal_api_key: str | None = Field(
         default=None, description="fal.ai API key for Kling video generation"
     )
+    seedance_api_key: str | None = Field(
+        default=None, description="xskill.ai API key for Seedance 2.0 video generation"
+    )
+    seedance_speed: str = Field(
+        default="seedance_2.0_fast",
+        description="Seedance model speed (seedance_2.0_fast or seedance_2.0)",
+    )
     elevenlabs_api_key: str | None = Field(default=None, description="ElevenLabs API key")
     instagram_access_token: str | None = Field(default=None, description="Instagram access token")
 
@@ -173,6 +224,36 @@ class Settings(BaseSettings):
     tiktok_redirect_uri: str = Field(
         default="http://localhost:8085/tiktok/callback",
         description="TikTok OAuth redirect URI",
+    )
+
+    # Content Research
+    research_enabled: bool = Field(
+        default=True,
+        description="Enable trend research for topic generation",
+    )
+    research_tiktok_enabled: bool = Field(
+        default=True,
+        description="Enable TikTok trend scraping",
+    )
+    research_youtube_enabled: bool = Field(
+        default=True,
+        description="Enable YouTube trend analysis",
+    )
+    research_tiktok_region: str = Field(
+        default="US",
+        description="TikTok region for trend data (US, GB, etc.)",
+    )
+    research_competitor_channels: str = Field(
+        default="",
+        description="Comma-separated YouTube channel IDs to analyze as competitors",
+    )
+    research_categories: str = Field(
+        default="",
+        description="Comma-separated content categories to focus on (empty = all)",
+    )
+    research_ideas_per_batch: int = Field(
+        default=10,
+        description="Number of video ideas to generate per research run",
     )
 
     # Encryption (for token storage)

@@ -84,7 +84,16 @@ class RenderVideoRequest(BaseModel):
     include_captions: bool = Field(default=True, description="Burn in captions")
     voice_id: str | None = Field(None, description="Voice ID for voiceover")
     narration_script: str | None = Field(None, description="Custom narration script")
-    background_music_url: str | None = Field(None, description="Background music URL")
+    background_music_url: str | None = Field(
+        None,
+        description="Background music URL/path (optional; defaults to configured track)",
+    )
+    background_music_volume: float | None = Field(
+        None,
+        ge=0.0,
+        le=1.0,
+        description="Optional music volume override (0-1)",
+    )
 
 
 @router.post(
@@ -303,6 +312,7 @@ async def trigger_render_video(request: RenderVideoRequest) -> JobResponse:
         voice_id=request.voice_id,
         narration_script=request.narration_script,
         background_music_url=request.background_music_url,
+        background_music_volume=request.background_music_volume,
     )
 
     return JobResponse(

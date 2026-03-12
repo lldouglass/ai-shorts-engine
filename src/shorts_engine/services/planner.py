@@ -11,6 +11,7 @@ from shorts_engine.adapters.llm.stub import StubLLMProvider
 from shorts_engine.config import settings
 from shorts_engine.logging import get_logger
 from shorts_engine.presets.styles import StylePreset, get_preset
+from shorts_engine.strategies.engagement import VIDEO_STRUCTURE, COMMENT_STRATEGIES, CTR_STRATEGIES, CAPTION_STRATEGIES
 
 logger = get_logger(__name__)
 
@@ -92,6 +93,24 @@ PROMPT STRUCTURE FOR EACH SCENE:
 3. Setting/environment (consistent lighting and atmosphere)
 4. Specific action or motion for this scene only
 
+ENGAGEMENT STRUCTURE (MANDATORY):
+Every video plan MUST follow this engagement arc:
+- Scene 1: HOOK SCENE - The scroll-stopper. Most visually striking moment.
+  Caption beat = the hook text (max 8 words, creates curiosity/dread).
+- Scenes 2 through N-2: VALUE/STORY - Build tension, deliver content, show data.
+  Caption beats should reinforce the narrative and keep viewers watching.
+- Scene N-1: CLIMAX/PAYOFF - The twist, the reveal, the key insight.
+- Scene N (FINAL): CTA SCENE - This scene MUST contain the engagement prompt.
+  Caption beat should be the comment CTA or website tease.
+  Examples: "Comment your car below", "Full list at [site]", "Which would you pick?"
+  This is NOT optional. Every video ends with a clear call-to-action.
+
+ON-SCREEN TEXT RULES (for caption_beat):
+- Max 8 words per caption beat
+- Must be readable as text overlay on phone (silent viewers = 90%+ of audience)
+- Keep text in center-safe zone (middle 70% of screen)
+- Avoid bottom 35% (platform UI) and top 15% (username area)
+
 Guidelines:
 - Create EXACTLY the number of scenes specified in the target scene count
 - Each scene should match the specified duration per scene
@@ -99,7 +118,7 @@ Guidelines:
 - Continuity notes should ensure consistent character/style across scenes
 - Caption beats should be punchy hooks that work as on-screen text
 - Incorporate the style tokens naturally into visual prompts
-- Build tension/interest with a clear arc: hook -> develop -> climax -> resolve"""
+- Build tension/interest with a clear arc: hook -> develop -> climax -> CTA"""
 
     def __init__(
         self,
@@ -139,6 +158,7 @@ Guidelines:
         optimization_context: str | None = None,
         story_context: dict[str, str] | None = None,
         target_duration_seconds: float | None = None,
+        engagement_context: dict[str, str] | None = None,
     ) -> str:
         """Build the user prompt with idea and style context.
 
@@ -148,6 +168,7 @@ Guidelines:
             optimization_context: Optional learnings from past performance
             story_context: Optional dict with 'narrative_style' and 'topic' for richer context
             target_duration_seconds: Optional target total video duration (from voiceover)
+            engagement_context: Optional dict with 'comment_prompt' and 'website_cta'
         """
         optimization_section = ""
         if optimization_context:
@@ -171,6 +192,27 @@ This video is based on a pre-written story. Preserve the narrative arc and emoti
                     story_section += f"Original Topic: {topic}\n"
                 if narrative_style:
                     story_section += f"Narrative Style: {narrative_style} (maintain this perspective in captions)\n"
+
+        # Engagement CTA section
+        engagement_section = ""
+        if engagement_context:
+            comment_prompt = engagement_context.get("comment_prompt", "")
+            website_cta = engagement_context.get("website_cta", "")
+            engagement_section = "\n## Engagement Requirements (MANDATORY)\n"
+            if comment_prompt:
+                engagement_section += f'The FINAL scene\'s caption_beat MUST be: "{comment_prompt}"\n'
+            if website_cta:
+                engagement_section += f'Include a scene near the end with caption_beat referencing: "{website_cta}"\n'
+            if not comment_prompt and not website_cta:
+                engagement_section += "The FINAL scene MUST have a clear CTA as its caption_beat (comment prompt or website tease).\n"
+        else:
+            engagement_section = """
+## Engagement Requirements (MANDATORY)
+The FINAL scene's caption_beat MUST be a call-to-action. Pick one:
+- Comment prompt: "Comment your [X] below", "Which would you pick?", "What did I miss?"
+- Website tease: "Full list at [site]", "Free tool - link in bio"
+Do NOT end with a generic "follow for more". End with something that drives action.
+"""
 
         # Calculate scene count and duration based on target
         duration_per_scene = preset.default_duration_per_scene
@@ -212,7 +254,11 @@ This video is based on a pre-written story. Preserve the narrative arc and emoti
 
 {duration_section}
 
-Generate a compelling {scene_count}-scene video plan that brings this idea to life in the {preset.display_name} style."""
+
+{engagement_section}
+
+Generate a compelling {scene_count}-scene video plan that brings this idea to life in the {preset.display_name} style.
+REMEMBER: Scene 1 caption_beat = scroll-stopping hook. Final scene caption_beat = CTA (comment prompt or website tease). This is non-negotiable."""
 
     async def plan(
         self,
@@ -221,6 +267,7 @@ Generate a compelling {scene_count}-scene video plan that brings this idea to li
         optimization_context: str | None = None,
         story_context: dict[str, str] | None = None,
         target_duration_seconds: float | None = None,
+        engagement_context: dict[str, str] | None = None,
     ) -> VideoPlan:
         """Generate a video plan from an idea and style preset.
 
@@ -231,6 +278,8 @@ Generate a compelling {scene_count}-scene video plan that brings this idea to li
             story_context: Optional dict with 'narrative_style' and 'topic' from Story
             target_duration_seconds: Optional target total video duration (from voiceover)
                 If provided, scene count and durations will be calculated to match
+            engagement_context: Optional dict with 'comment_prompt' and 'website_cta'
+                If provided, these are baked into the final scene's caption beat
 
         Returns:
             VideoPlan with title, description, and scenes
@@ -264,7 +313,8 @@ Generate a compelling {scene_count}-scene video plan that brings this idea to li
             LLMMessage(
                 role="user",
                 content=self._build_user_prompt(
-                    idea, preset, optimization_context, story_context, target_duration_seconds
+                    idea, preset, optimization_context, story_context,
+                    target_duration_seconds, engagement_context,
                 ),
             ),
         ]

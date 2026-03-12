@@ -1,0 +1,258 @@
+{
+  "timestamp": "2026-02-23T21:57:50.848551+00:00",
+  "signals_count": 68,
+  "ideas_count": 5,
+  "signals_by_source": {
+    "tiktok": 18,
+    "youtube": 50
+  },
+  "ideas": [
+    {
+      "title": "Core Strength Transformation Challenge! \ud83d\udcaa",
+      "concept": "A powerful visual narrative showcasing a character\u2019s transformation through core exercises, depicted in various dramatic landscapes. The AI-generated imagery captures intense close-ups and dynamic movements, motivating viewers to take on the challenge.",
+      "hook": "Watch me go from zero to hero in 30 seconds!",
+      "style": "high-energy, motivational visuals",
+      "mood": "inspiring and empowering",
+      "target_duration_seconds": 45,
+      "virality_score": 0.8,
+      "ai_feasibility_score": 0.9,
+      "competition_score": 0.6,
+      "overall_score": 0.785,
+      "source_signals": [],
+      "category": "motivation",
+      "reasoning": "This concept capitalizes on the fitness trend currently gaining traction on TikTok, presenting an engaging challenge format that encourages viewer participation and sharing.",
+      "hashtags": [
+        "#FitnessChallenge",
+        "#CoreStrength",
+        "#Motivation"
+      ],
+      "generated_at": "2026-02-23T21:57:50.848551+00:00"
+    },
+    {
+      "title": "Stranger Things Recap in a Rap! \ud83c\udfa4",
+      "concept": "A visually captivating montage that explores key moments from 'Stranger Things' as an AI-generated rap narrates the story. Each rap line corresponds to a stunning scene, like the Upside Down and character highlights, capturing the show's essence.",
+      "hook": "A rapid-fire montage of the Upside Down with electrifying beats!",
+      "style": "vibrant cinematic storytelling",
+      "mood": "nostalgic and thrilling",
+      "target_duration_seconds": 45,
+      "virality_score": 0.9,
+      "ai_feasibility_score": 0.85,
+      "competition_score": 0.5,
+      "overall_score": 0.7825,
+      "source_signals": [],
+      "category": "entertainment",
+      "reasoning": "This concept leverages the massive hype around 'Stranger Things' and combines it with the engaging format of rap storytelling, similar to trending TikTok strategies but not yet seen on YouTube.",
+      "hashtags": [
+        "#StrangerThings",
+        "#raprecap",
+        "#FallonTonight"
+      ],
+      "generated_at": "2026-02-23T21:57:50.848551+00:00"
+    },
+    {
+      "title": "When the Dog Door Reveals Secrets! \ud83d\udc15\ud83d\udeaa",
+      "concept": "A comedic narrative where a dog uncovers a hidden secret after pushing through a door. The AI-generated visuals depict dramatic lighting as the scene unfolds, capturing the dog's curious expressions and the surprise twist.",
+      "hook": "What\u2019s behind the door? You won\u2019t believe it!",
+      "style": "whimsical, colorful cinematics",
+      "mood": "playful and funny",
+      "target_duration_seconds": 45,
+      "virality_score": 0.75,
+      "ai_feasibility_score": 0.9,
+      "competition_score": 0.5,
+      "overall_score": 0.74,
+      "source_signals": [],
+      "category": "comedy",
+      "reasoning": "This draws from popular dog content on TikTok and uses a humorous twist to engage viewers, enticing them to stick around for the revelation.",
+      "hashtags": [
+        "#FunnyDogs",
+        "#DogComedy",
+        "#PetDrama"
+      ],
+      "generated_at": "2026-02-23T21:57:50.848551+00:00"
+    },
+    {
+      "title": "The Heartfelt Bond of Dog and Baby \ud83d\udc36\u2764\ufe0f",
+      "concept": "A touching visual story showcasing a dog interacting with a baby, illustrated through serene and heartwarming landscapes. As the voiceover narrates the unbreakable bond and love, we see beautiful close-ups of their adorable moments.",
+      "hook": "A dog gently nuzzles a baby\u2014pure love in action!",
+      "style": "soft, warm cinematic visuals",
+      "mood": "heartwarming and uplifting",
+      "target_duration_seconds": 45,
+      "virality_score": 0.8,
+      "ai_feasibility_score": 0.9,
+      "competition_score": 0.4,
+      "overall_score": 0.735,
+      "source_signals": [],
+      "category": "entertainment",
+      "reasoning": "This idea taps into emotional pet content, leveraging the viral success of similar themes on TikTok, while also appealing to the underserved niche of heartfelt animal stories.",
+      "hashtags": [
+        "#doglove",
+        "#babybond",
+        "#cutepets"
+      ],
+      "generated_at": "2026-02-23T21:57:50.848551+00:00"
+    },
+    {
+      "title": "The Journey of New Heartbreak \ud83d\udc94",
+      "concept": "A visual representation of heartbreak illustrated through surreal landscapes and abstract imagery. The narrative follows a character experiencing different stages of heartbreak, with visual metaphors for each emotion.",
+      "hook": "Heartbreak never looked so beautiful and haunting...",
+      "style": "surreal abstract visuals",
+      "mood": "eerie yet beautiful",
+      "target_duration_seconds": 45,
+      "virality_score": 0.7,
+      "ai_feasibility_score": 0.85,
+      "competition_score": 0.3,
+      "overall_score": 0.6524999999999999,
+      "source_signals": [],
+      "category": "storytelling",
+      "reasoning": "This idea captures the emotional depth of a trending song on TikTok, differentiating itself with a unique artistic style that appeals to viewers seeking deeper emotional content.",
+      "hashtags": [
+        "#NewHeart",
+        "#heartbreak",
+        "#surrealart"
+      ],
+      "generated_at": "2026-02-23T21:57:50.848551+00:00"
+    }
+  ],
+  "top_signals": [
+    {
+      "title": "The cast of @Stranger Things rap a recap of the entire series ahead of the final season! #FallonTonight #TonightShow #StrangerThings #StrangerThingsOnFallon ",
+      "source": "tiktok",
+      "views": 183400000,
+      "virality_score": 0.917,
+      "category": "entertainment"
+    },
+    {
+      "title": "this song is called \u201cNew Heart\u201d\ud83d\udc94 I wasn\u2019t expecting that from this random rapper\ud83e\udd2f @Adonys10 #sing #singing #freestyle #rap ",
+      "source": "tiktok",
+      "views": 211700000,
+      "virality_score": 0.917,
+      "category": "entertainment"
+    },
+    {
+      "title": "NCT JNJM \uc5d4\uc2dc\ud2f0 \uc81c\ub178\uc7ac\ubbfc 'BOTH SIDES' MV",
+      "source": "youtube",
+      "views": 786214,
+      "virality_score": 0.855,
+      "category": "tech"
+    },
+    {
+      "title": "XG - ROCK THE BOAT (Official Music Video)",
+      "source": "youtube",
+      "views": 1287894,
+      "virality_score": 0.849,
+      "category": "tech"
+    },
+    {
+      "title": "TOP 5 BEST OF THE VOICE PERFORMANCES #top5 #TheVoice #Auditions #performances #singing",
+      "source": "tiktok",
+      "views": 215100000,
+      "virality_score": 0.839,
+      "category": "entertainment"
+    },
+    {
+      "title": "[Official Trailer] Girl Rules \u0e01\u0e0e\u0e2b\u0e25\u0e31\u0e01...\u0e2b\u0e49\u0e32\u0e21\u0e23\u0e31\u0e01\u0e40\u0e18\u0e2d",
+      "source": "youtube",
+      "views": 384334,
+      "virality_score": 0.822,
+      "category": "entertainment"
+    },
+    {
+      "title": "YoungBoy Never Broke Again - Another Episode [Official Video]",
+      "source": "youtube",
+      "views": 422922,
+      "virality_score": 0.813,
+      "category": "tech"
+    },
+    {
+      "title": "\"That Isn't Me, Bro\"",
+      "source": "youtube",
+      "views": 279986,
+      "virality_score": 0.812,
+      "category": "gaming"
+    },
+    {
+      "title": "When the Door Opens\u2026 and the Truth Comes Out \ud83d\ude05\ud83d\udc36 #FunnyDogs #DogDrama #TinyButLoud #PitbullVsMiniPinscher #CaughtIn4K #DogComedy #ViralClip #PetMoments #CinematicPets #DogTok #neonxai",
+      "source": "tiktok",
+      "views": 207400000,
+      "virality_score": 0.805,
+      "category": "comedy"
+    },
+    {
+      "title": "Mansplaining Resident Evil Lore",
+      "source": "youtube",
+      "views": 710045,
+      "virality_score": 0.803,
+      "category": "gaming"
+    },
+    {
+      "title": "IVE \uc544\uc774\ube0c 'BLACKHOLE' MV",
+      "source": "youtube",
+      "views": 3548323,
+      "virality_score": 0.795,
+      "category": "entertainment"
+    },
+    {
+      "title": "#foryou #funnyai #tiktokfunny #viral #trending ",
+      "source": "tiktok",
+      "views": 283500000,
+      "virality_score": 0.789,
+      "category": "comedy"
+    },
+    {
+      "title": "#snow",
+      "source": "tiktok",
+      "views": 366200000,
+      "virality_score": 0.789,
+      "category": "entertainment"
+    },
+    {
+      "title": "Revelada voz Brasileira do Hakari? \ud83d\ude0d\ud83d\udd25",
+      "source": "youtube",
+      "views": 582071,
+      "virality_score": 0.783,
+      "category": "scifi_fantasy"
+    },
+    {
+      "title": "Aaya Sher - Song Promo | The Paradise | Nani | Anirudh Ravichander | Srikanth Odela",
+      "source": "youtube",
+      "views": 1839428,
+      "virality_score": 0.78,
+      "category": "tech"
+    },
+    {
+      "title": "#funnyvideos #animation #aicat #orangecat #cartoon ",
+      "source": "tiktok",
+      "views": 447700000,
+      "virality_score": 0.778,
+      "category": "comedy"
+    },
+    {
+      "title": "The dog poured all its tenderness into the baby\u2764\ufe0f\ud83e\udd70#dog #baby #love #bestfriend #fyp ",
+      "source": "tiktok",
+      "views": 176600000,
+      "virality_score": 0.774,
+      "category": "entertainment"
+    },
+    {
+      "title": "They laughed when she started. They\u2019ll go silent when she changes \u2026 #coreexercises #corestrength #corechallenge #calisthenics #girlfitness ",
+      "source": "tiktok",
+      "views": 355600000,
+      "virality_score": 0.772,
+      "category": "entertainment"
+    },
+    {
+      "title": "from 7 days not cry \ud83d\ude2d#newborn #unfreezmyaccount ",
+      "source": "tiktok",
+      "views": 208900000,
+      "virality_score": 0.771,
+      "category": "entertainment"
+    },
+    {
+      "title": "Anime CANCELADO por causa da DUBLAGEM? \ud83d\ude28\ud83d\udc94",
+      "source": "youtube",
+      "views": 564128,
+      "virality_score": 0.768,
+      "category": "scifi_fantasy"
+    }
+  ]
+}

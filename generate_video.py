@@ -120,6 +120,18 @@ Available voice presets:
         default="output",
         help="Output directory for generated files (default: output)",
     )
+    parser.add_argument(
+        "--comment-prompt",
+        type=str,
+        default=None,
+        help="Comment CTA for final scene (e.g., 'Comment your car below')",
+    )
+    parser.add_argument(
+        "--website-cta",
+        type=str,
+        default=None,
+        help="Website CTA for the video (e.g., 'Full list at carlifespancheck.com')",
+    )
 
     return parser.parse_args()
 
@@ -148,7 +160,10 @@ async def generate_story(topic: str) -> Story:
     return story
 
 
-async def generate_plan(story: Story) -> VideoPlan:
+async def generate_plan(
+    story: Story,
+    engagement_context: dict[str, str] | None = None,
+) -> VideoPlan:
     """Generate a video plan using PlannerService with target duration."""
     print("\n" + "=" * 60)
     print("[PLAN] Generating video plan with target duration...")
@@ -169,6 +184,7 @@ async def generate_plan(story: Story) -> VideoPlan:
         style_preset_name=story.suggested_preset,
         story_context=story_context,
         target_duration_seconds=story.estimated_duration_seconds,
+        engagement_context=engagement_context,
     )
 
     print(f"\n   Title: {plan.title}")
@@ -376,7 +392,7 @@ async def render_final_video(
             scene = plan.scenes[i]
             scene_clips.append(
                 SceneClip(
-                    video_url=f"file://{clip_path.absolute()}",
+                    video_url=str(clip_path.absolute()),
                     duration_seconds=scene.duration_seconds,
                     caption_text=None,  # No on-screen text
                     scene_number=scene.scene_number,
@@ -388,7 +404,7 @@ async def render_final_video(
 
     request = CreatomateRenderRequest(
         scenes=scene_clips,
-        voiceover_url=f"file://{voiceover_path.absolute()}" if voiceover_path else None,
+        voiceover_url=str(voiceover_path.absolute()) if voiceover_path else None,
         width=1080,
         height=1920,
         fps=30,
@@ -474,8 +490,19 @@ async def main(args: argparse.Namespace) -> None:
 
         story.estimated_duration_seconds = target_duration
 
-        # Step 4: Generate plan with target duration
-        plan = await generate_plan(story)
+        # Build engagement context if provided
+        engagement_context = None
+        if args.comment_prompt or args.website_cta:
+            engagement_context = {}
+            if args.comment_prompt:
+                engagement_context["comment_prompt"] = args.comment_prompt
+            if args.website_cta:
+                engagement_context["website_cta"] = args.website_cta
+            print(f"\n[ENGAGEMENT] Comment CTA: {args.comment_prompt or 'auto'}")
+            print(f"[ENGAGEMENT] Website CTA: {args.website_cta or 'auto'}")
+
+        # Step 4: Generate plan with target duration and engagement
+        plan = await generate_plan(story, engagement_context=engagement_context)
 
         # Step 5: Generate video clips
         frame_chaining = not args.no_frame_chaining and settings.video_frame_chaining_enabled

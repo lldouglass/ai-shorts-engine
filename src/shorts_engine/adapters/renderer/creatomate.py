@@ -61,6 +61,15 @@ class ImageSceneClip:
 
 
 @dataclass
+class TimedCaption:
+    """A timed subtitle/caption entry."""
+
+    text: str
+    start_seconds: float
+    end_seconds: float
+
+
+@dataclass
 class CreatomateRenderRequest:
     """Extended render request for Creatomate with scene data."""
 
@@ -71,7 +80,8 @@ class CreatomateRenderRequest:
     height: int = 1920
     fps: int = 30
     background_music_url: str | None = None
-    background_music_volume: float = 0.3
+    background_music_volume: float = 0.12
+    timed_captions: list[TimedCaption] | None = None
     caption_style: dict[str, Any] | None = None
 
 
@@ -90,7 +100,8 @@ class ImageCompositionRequest:
     height: int = 1920
     fps: int = 30
     background_music_url: str | None = None
-    background_music_volume: float = 0.3
+    background_music_volume: float = 0.12
+    timed_captions: list[TimedCaption] | None = None
     caption_style: dict[str, Any] | None = None
 
 
@@ -318,6 +329,7 @@ class CreatomateProvider(RendererProvider):
         total_duration = sum(img.duration_seconds for img in request.images)
         elements: list[dict[str, Any]] = []
         current_time = 0.0
+        caption_style = request.caption_style or self._default_caption_style()
 
         for img in request.images:
             motion = img.motion
@@ -376,9 +388,8 @@ class CreatomateProvider(RendererProvider):
 
             elements.append(image_element)
 
-            # Caption element
-            if img.caption_text:
-                caption_style = request.caption_style or self._default_caption_style()
+            # Scene-level caption fallback (only if no timed captions were provided)
+            if not request.timed_captions and img.caption_text:
                 caption_element: dict[str, Any] = {
                     "type": "text",
                     "text": img.caption_text,
@@ -390,8 +401,23 @@ class CreatomateProvider(RendererProvider):
 
             current_time += img.duration_seconds
 
+        # Timed captions (audio-first subtitles) take priority over scene labels.
+        if request.timed_captions:
+            for caption in request.timed_captions:
+                duration = max(0.1, caption.end_seconds - caption.start_seconds)
+                elements.append(
+                    {
+                        "type": "text",
+                        "text": caption.text,
+                        "time": max(0.0, caption.start_seconds),
+                        "duration": duration,
+                        **caption_style,
+                    }
+                )
+
         # Audio tracks
-        if request.voiceover_url:
+        has_voiceover = bool(request.voiceover_url)
+        if has_voiceover:
             elements.append(
                 {
                     "type": "audio",
@@ -403,14 +429,19 @@ class CreatomateProvider(RendererProvider):
             )
 
         if request.background_music_url:
+            music_volume = request.background_music_volume
+            if has_voiceover:
+                music_volume = min(music_volume, settings.background_music_ducked_max_volume)
+
             elements.append(
                 {
                     "type": "audio",
                     "source": request.background_music_url,
                     "time": 0,
                     "duration": total_duration,
-                    "volume": f"{int(request.background_music_volume * 100)}%",
-                    "audio_fade_out": 2.0,
+                    "volume": f"{int(music_volume * 100)}%",
+                    "audio_fade_in": settings.background_music_fade_in_seconds,
+                    "audio_fade_out": settings.background_music_fade_out_seconds,
                 }
             )
 
@@ -445,6 +476,7 @@ class CreatomateProvider(RendererProvider):
 
         # Build the elements list
         elements: list[dict[str, Any]] = []
+        caption_style = request.caption_style or self._default_caption_style()
 
         # Track for video clips (sequential composition)
         video_track: list[dict[str, Any]] = []
@@ -461,9 +493,8 @@ class CreatomateProvider(RendererProvider):
             }
             video_track.append(clip_element)
 
-            # Caption element (burned-in text)
-            if scene.caption_text:
-                caption_style = request.caption_style or self._default_caption_style()
+            # Scene-level caption fallback (only when timed subtitles are absent)
+            if not request.timed_captions and scene.caption_text:
                 caption_element: dict[str, Any] = {
                     "type": "text",
                     "text": scene.caption_text,
@@ -475,14 +506,30 @@ class CreatomateProvider(RendererProvider):
 
             current_time += scene.duration_seconds
 
+        # Timed captions (audio-first subtitles) take priority over scene labels.
+        if request.timed_captions:
+            for caption in request.timed_captions:
+                duration = max(0.1, caption.end_seconds - caption.start_seconds)
+                elements.append(
+                    {
+                        "type": "text",
+                        "text": caption.text,
+                        "time": max(0.0, caption.start_seconds),
+                        "duration": duration,
+                        **caption_style,
+                    }
+                )
+
         # Add video track elements
         elements.extend(video_track)
 
         # Audio tracks
         audio_elements: list[dict[str, Any]] = []
 
+        has_voiceover = bool(request.voiceover_url)
+
         # Voiceover track
-        if request.voiceover_url:
+        if has_voiceover:
             audio_elements.append(
                 {
                     "type": "audio",
@@ -493,16 +540,21 @@ class CreatomateProvider(RendererProvider):
                 }
             )
 
-        # Background music (lower volume)
+        # Background music (low mix under narration)
         if request.background_music_url:
+            music_volume = request.background_music_volume
+            if has_voiceover:
+                music_volume = min(music_volume, settings.background_music_ducked_max_volume)
+
             audio_elements.append(
                 {
                     "type": "audio",
                     "source": request.background_music_url,
                     "time": 0,
                     "duration": total_duration,
-                    "volume": f"{int(request.background_music_volume * 100)}%",
-                    "audio_fade_out": 2.0,
+                    "volume": f"{int(music_volume * 100)}%",
+                    "audio_fade_in": settings.background_music_fade_in_seconds,
+                    "audio_fade_out": settings.background_music_fade_out_seconds,
                 }
             )
 
@@ -527,19 +579,20 @@ class CreatomateProvider(RendererProvider):
     def _default_caption_style(self) -> dict[str, Any]:
         """Get default caption styling for burned-in text."""
         return {
-            "y": "85%",  # Position near bottom
-            "width": "90%",
+            # Safer subtitle zone for Shorts/Reels/TikTok UI overlays.
+            "y": "70%",
+            "width": "84%",
             "x_alignment": "50%",
             "y_alignment": "50%",
             "font_family": "Montserrat",
             "font_weight": "800",
-            "font_size": "7 vmin",
+            "font_size": "6.2 vmin",
             "fill_color": "#ffffff",
             "stroke_color": "#000000",
-            "stroke_width": "1.5 vmin",
-            "text_transform": "uppercase",
+            "stroke_width": "1.4 vmin",
+            "text_transform": "none",
             "shadow_color": "rgba(0,0,0,0.8)",
-            "shadow_blur": "4 vmin",
+            "shadow_blur": "3.4 vmin",
         }
 
     async def _poll_for_completion(

@@ -42,6 +42,10 @@ class GeneratedTopic:
     reasoning: str | None = None  # Why this topic might perform well
     trend_source: str | None = None  # If based on a trend, what source
 
+    # Engagement strategy fields (populated by LLM topic provider)
+    comment_prompt: str | None = None  # e.g., "Comment your car and I'll tell you..."
+    website_cta: str | None = None  # e.g., "Full rankings at moatifi.com"
+
     def __str__(self) -> str:
         return self.topic
 

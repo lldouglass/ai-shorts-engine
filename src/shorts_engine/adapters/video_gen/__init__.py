@@ -7,6 +7,7 @@ from shorts_engine.adapters.video_gen.base import (
 )
 from shorts_engine.adapters.video_gen.kling import KlingProvider
 from shorts_engine.adapters.video_gen.luma import LumaProvider
+from shorts_engine.adapters.video_gen.seedance import SeedanceProvider
 from shorts_engine.adapters.video_gen.stub import StubVideoGenProvider
 from shorts_engine.adapters.video_gen.veo import VeoProvider
 
@@ -16,6 +17,7 @@ __all__ = [
     "VideoGenResult",
     "KlingProvider",
     "LumaProvider",
+    "SeedanceProvider",
     "StubVideoGenProvider",
     "VeoProvider",
 ]

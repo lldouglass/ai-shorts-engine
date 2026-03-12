@@ -69,6 +69,10 @@ def get_video_gen_provider() -> VideoGenProvider:
         from shorts_engine.adapters.video_gen.kling import KlingProvider
 
         return KlingProvider()
+    elif provider == "seedance":
+        from shorts_engine.adapters.video_gen.seedance import SeedanceProvider
+
+        return SeedanceProvider()
     else:
         return StubVideoGenProvider()
 
@@ -81,7 +85,7 @@ def get_video_gen_provider() -> VideoGenProvider:
 @celery_app.task(
     bind=True,
     name="pipeline.plan_job",
-    max_retries=5,  # Increased for QA retries
+    max_retries=1,  # One-shot: minimal retry (only on transient failures)
     default_retry_delay=30,
     autoretry_for=(Exception,),
     retry_backoff=True,
@@ -604,7 +608,7 @@ def _generate_single_scene_clip(
 @celery_app.task(
     bind=True,
     name="pipeline.generate_scene_clip",
-    max_retries=5,
+    max_retries=1,  # One-shot: no retry spiral on failed scenes
     default_retry_delay=60,
     autoretry_for=(Exception,),
     retry_backoff=True,
@@ -634,8 +638,8 @@ def generate_scene_clip_task(
 @celery_app.task(
     bind=True,
     name="pipeline.generate_all_scenes",
-    soft_time_limit=1800,  # 30 min soft limit (sequential frame chaining ~75s/scene)
-    time_limit=1860,  # 31 min hard limit
+    soft_time_limit=7200,  # 2h soft limit (Kling 3.0 img2vid ~10 min/scene)
+    time_limit=7260,  # 2h + 1 min hard limit
 )
 def generate_all_scenes_task(
     _self: Any,  # noqa: ARG001
@@ -1197,8 +1201,8 @@ def run_full_pipeline_task(
 @celery_app.task(
     bind=True,
     name="pipeline.generate_all_scenes_from_plan",
-    soft_time_limit=1800,
-    time_limit=1860,
+    soft_time_limit=7200,  # 2h soft limit (Kling 3.0 img2vid ~10 min/scene)
+    time_limit=7260,  # 2h + 1 min hard limit
 )
 def generate_all_scenes_from_plan(
     _self: Any,  # noqa: ARG001

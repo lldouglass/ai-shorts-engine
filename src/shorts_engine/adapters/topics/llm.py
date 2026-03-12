@@ -5,17 +5,20 @@ import json
 from shorts_engine.adapters.llm.base import LLMMessage, LLMProvider
 from shorts_engine.adapters.topics.base import GeneratedTopic, TopicContext, TopicProvider
 from shorts_engine.logging import get_logger
+from shorts_engine.strategies.engagement import get_strategies_for_niche
+from shorts_engine.strategies.hooks import HOOK_FORMULAS
 
 logger = get_logger(__name__)
 
 SYSTEM_PROMPT = """You are a viral content strategist specializing in short-form video content.
-Your job is to generate compelling, high-performing video topic ideas.
+Your job is to generate compelling, high-performing video topic ideas that DRIVE ENGAGEMENT AND WEBSITE TRAFFIC.
 
 You understand:
 - What makes content go viral (emotional hooks, curiosity gaps, controversy, relatability)
 - Current social media trends and attention patterns
 - How to balance creativity with proven formats
 - The importance of strong hooks that stop the scroll
+- How to structure topics that drive COMMENTS and WEBSITE CLICKS (not just views)
 
 Generate topics that:
 1. Have strong emotional hooks (curiosity, surprise, fear, joy, anger, awe)
@@ -23,38 +26,59 @@ Generate topics that:
 3. Appeal to broad audiences while still being specific enough to be interesting
 4. Haven't been overdone but build on proven viral formats
 5. Create a curiosity gap that makes viewers need to watch
+6. NATURALLY support a comment prompt (e.g., "comment your car", "which would you pick?")
+7. NATURALLY support a website CTA (e.g., partial list with full list on site, tool tease)
 
-IMPORTANT: Avoid topics too similar to the recent topics provided. Diversify!"""
+IMPORTANT: Avoid topics too similar to the recent topics provided. Diversify!
 
-USER_PROMPT_TEMPLATE = """Generate {n} unique, viral-worthy video topic ideas for this project:
+{hook_formulas}"""
 
-PROJECT: {project_name}
-DESCRIPTION: {project_description}
-NICHE: {niche}
+USER_PROMPT_TEMPLATE = """Generate {{n}} unique, viral-worthy video topic ideas for this project:
+
+PROJECT: {{project_name}}
+DESCRIPTION: {{project_description}}
+NICHE: {{niche}}
 
 CONTEXT FOR OPTIMIZATION:
-- Top performing topics (learn from these): {top_performing}
-- Recent topics (AVOID similar ones): {recent_topics}
-- Best hook types for this audience: {top_hooks}
-- Trending topics to consider: {trending}
+- Top performing topics (learn from these): {{top_performing}}
+- Recent topics (AVOID similar ones): {{recent_topics}}
+- Best hook types for this audience: {{top_hooks}}
+- Trending topics to consider: {{trending}}
 
-Generate exactly {n} topics. For each topic, provide:
+{engagement_strategies}
+
+Generate exactly {{n}} topics. For each topic, provide:
 1. The topic idea (compelling, specific, creates curiosity)
 2. Suggested hook type (question, statement, visual, story, contrast, or mystery)
 3. Virality score estimate (0.0 to 1.0)
 4. Brief reasoning for why this will perform well
+5. A comment_prompt: the exact comment CTA to use in this video (e.g., "Comment your car and I'll tell you how long it'll last")
+6. A website_cta: the exact website tease to use (e.g., "Full rankings for 450+ stocks free at moatifi.com")
 
 Return as JSON array:
 [
-  {{
+  {{{{
     "topic": "Topic text here",
     "hook_suggestion": "question",
     "estimated_virality_score": 0.85,
-    "reasoning": "Why this topic will work"
-  }}
+    "reasoning": "Why this topic will work",
+    "comment_prompt": "Comment your car and I'll tell you how long it'll last",
+    "website_cta": "Full reliability rankings at carlifespancheck.com"
+  }}}}
 ]
 
 Return ONLY the JSON array, no other text."""
+
+
+def build_system_prompt(niche: str | None = None) -> str:
+    """Build the system prompt with hook formulas."""
+    return SYSTEM_PROMPT.format(hook_formulas=HOOK_FORMULAS)
+
+
+def build_user_prompt_template(niche: str | None = None) -> str:
+    """Build the user prompt template with niche-specific strategies."""
+    strategies = get_strategies_for_niche(niche)
+    return USER_PROMPT_TEMPLATE.format(engagement_strategies=strategies)
 
 
 class LLMTopicProvider(TopicProvider):
@@ -87,12 +111,18 @@ class LLMTopicProvider(TopicProvider):
             llm_provider=self._llm.name,
         )
 
+        niche = context.niche or "General interest"
+
+        # Build prompts with engagement strategies for this niche
+        system_prompt = build_system_prompt(niche)
+        user_template = build_user_prompt_template(niche)
+
         # Build the user prompt with context
-        user_prompt = USER_PROMPT_TEMPLATE.format(
+        user_prompt = user_template.format(
             n=n,
             project_name=context.project_name,
             project_description=context.project_description or "General content",
-            niche=context.niche or "General interest",
+            niche=niche,
             top_performing=", ".join(context.top_performing_topics[:5]) or "None yet",
             recent_topics=", ".join(context.recent_topics[:10]) or "None",
             top_hooks=", ".join(context.top_hook_types[:3]) or "All types work",
@@ -100,7 +130,7 @@ class LLMTopicProvider(TopicProvider):
         )
 
         messages = [
-            LLMMessage(role="system", content=SYSTEM_PROMPT),
+            LLMMessage(role="system", content=system_prompt),
             LLMMessage(role="user", content=user_prompt),
         ]
 
@@ -154,14 +184,18 @@ class LLMTopicProvider(TopicProvider):
             topics = []
             for item in data[:expected_n]:
                 if isinstance(item, dict):
-                    topics.append(
-                        GeneratedTopic(
-                            topic=item.get("topic", ""),
-                            hook_suggestion=item.get("hook_suggestion"),
-                            estimated_virality_score=item.get("estimated_virality_score"),
-                            reasoning=item.get("reasoning"),
-                        )
+                    topic = GeneratedTopic(
+                        topic=item.get("topic", ""),
+                        hook_suggestion=item.get("hook_suggestion"),
+                        estimated_virality_score=item.get("estimated_virality_score"),
+                        reasoning=item.get("reasoning"),
                     )
+                    # Attach engagement metadata if present
+                    if item.get("comment_prompt"):
+                        topic.comment_prompt = item["comment_prompt"]
+                    if item.get("website_cta"):
+                        topic.website_cta = item["website_cta"]
+                    topics.append(topic)
                 elif isinstance(item, str):
                     topics.append(GeneratedTopic(topic=item))
 

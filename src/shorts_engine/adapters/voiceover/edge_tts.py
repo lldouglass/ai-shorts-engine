@@ -1,7 +1,5 @@
 """Microsoft Edge TTS voiceover provider (free fallback)."""
 
-import tempfile
-from pathlib import Path
 from typing import Any
 
 from shorts_engine.adapters.voiceover.base import (
@@ -66,32 +64,66 @@ class EdgeTTSProvider(VoiceoverProvider):
         )
 
         try:
-            # Create communicate object
+            # Stream audio + word boundaries so we can generate subtitle timing
+            # from the voice track itself (audio-first captions).
             communicate = edge_tts.Communicate(
                 text=request.text,
                 voice=voice,
                 rate=self._format_rate(request.speed),
                 pitch=self._format_pitch(request.pitch),
+                boundary="WordBoundary",
             )
 
-            # Generate to a temporary file
-            with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as temp_file:
-                temp_path = Path(temp_file.name)
+            audio_chunks: list[bytes] = []
+            word_boundaries: list[dict[str, Any]] = []
+            sentence_boundaries: list[dict[str, Any]] = []
 
-            await communicate.save(str(temp_path))
+            async for chunk in communicate.stream():
+                chunk_type = chunk.get("type")
 
-            # Read the audio data
-            audio_data = temp_path.read_bytes()
-            temp_path.unlink()  # Clean up
+                if chunk_type == "audio":
+                    audio_data = chunk.get("data")
+                    if isinstance(audio_data, bytes):
+                        audio_chunks.append(audio_data)
+                    continue
 
-            # Estimate duration
-            word_count = len(request.text.split())
-            estimated_duration = (word_count / 150) * 60 / request.speed
+                # Edge-TTS offsets are in 100ns units.
+                if chunk_type in ("WordBoundary", "SentenceBoundary"):
+                    text = str(chunk.get("text") or "").strip()
+                    offset = float(chunk.get("offset") or 0.0) / 10_000_000.0
+                    duration = float(chunk.get("duration") or 0.0) / 10_000_000.0
+                    end = max(offset + duration, offset + 0.04)
+
+                    payload = {
+                        "text": text,
+                        "start_seconds": offset,
+                        "end_seconds": end,
+                    }
+
+                    if chunk_type == "WordBoundary" and text:
+                        word_boundaries.append(payload)
+                    elif chunk_type == "SentenceBoundary" and text:
+                        sentence_boundaries.append(payload)
+
+            audio_data = b"".join(audio_chunks)
+            if not audio_data:
+                raise RuntimeError("edge-tts stream returned no audio chunks")
+
+            # Prefer exact duration from final boundary, fallback to words-per-minute estimate.
+            estimated_duration = 0.0
+            if word_boundaries:
+                estimated_duration = float(word_boundaries[-1]["end_seconds"])
+            elif sentence_boundaries:
+                estimated_duration = float(sentence_boundaries[-1]["end_seconds"])
+            else:
+                word_count = len(request.text.split())
+                estimated_duration = (word_count / 150) * 60 / request.speed
 
             logger.info(
                 "edge_tts_generation_completed",
                 audio_size=len(audio_data),
                 estimated_duration=estimated_duration,
+                word_boundaries=len(word_boundaries),
             )
 
             return VoiceoverResult(
@@ -102,6 +134,8 @@ class EdgeTTSProvider(VoiceoverProvider):
                     "provider": self.name,
                     "voice": voice,
                     "text_length": len(request.text),
+                    "word_boundaries": word_boundaries,
+                    "sentence_boundaries": sentence_boundaries,
                 },
             )
 

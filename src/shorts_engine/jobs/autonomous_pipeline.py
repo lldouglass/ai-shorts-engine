@@ -224,13 +224,13 @@ def run_pipeline_for_job_task(
     if auto_render:
         # Schedule render to run after video generation
         render_task = chain(
-            run_render_pipeline_task.s(video_job_id),
+            run_render_pipeline_task.s(video_job_id, include_captions=True),
         )
 
         # If auto_publish is also enabled, chain publish after render
         if auto_publish and settings.autopublish_enabled:
             render_task = chain(
-                run_render_pipeline_task.s(video_job_id),
+                run_render_pipeline_task.s(video_job_id, include_captions=True),
                 # Publish task needs to extract job_id from render result
                 _chain_publish_after_render.s(),
             )
@@ -442,22 +442,96 @@ def run_nightly_batch_task(
             "error": "Autonomous mode is disabled. Set AUTONOMOUS_ENABLED=true to enable.",
         }
 
-    # Step 1: Generate topics
-    with get_session_context() as session:
-        project = session.get(ProjectModel, project_uuid)
-        if not project:
-            return {"success": False, "error": f"Project not found: {project_id}"}
+    # Step 1: Generate topics (using research engine if enabled, else LLM-only)
+    topics = []
+    research_used = False
 
-        # Get LLM provider if needed
-        llm_provider = None
-        if settings.topic_provider == "llm":
+    if settings.research_enabled:
+        # Use the content research engine for trend-driven topic generation
+        try:
+            from shorts_engine.services.content_researcher import ContentResearcher
+
             llm_provider = _get_llm_provider()
 
-        generator = TopicGenerator(session, llm_provider=llm_provider)
+            competitor_channels = [
+                ch.strip()
+                for ch in settings.research_competitor_channels.split(",")
+                if ch.strip()
+            ]
+            categories = [
+                c.strip()
+                for c in settings.research_categories.split(",")
+                if c.strip()
+            ] or None
 
-        # Generate more topics than needed for fallback
-        topics_result = _run_async(generator.generate(project_uuid, n=n * 2, temperature=0.8))
-        topics = [t.topic for t in topics_result]
+            researcher = ContentResearcher(
+                llm_provider=llm_provider,
+                youtube_api_key=settings.google_api_key,
+                competitor_channels=competitor_channels,
+                tiktok_region=settings.research_tiktok_region,
+            )
+
+            # Get recent video titles to avoid duplicates
+            recent_videos = []
+            with get_session_context() as session:
+                from sqlalchemy import desc, select
+                recent = (
+                    session.execute(
+                        select(VideoJobModel.idea)
+                        .where(
+                            VideoJobModel.project_id == project_uuid,
+                            VideoJobModel.idea.isnot(None),
+                        )
+                        .order_by(desc(VideoJobModel.created_at))
+                        .limit(20)
+                    )
+                    .scalars()
+                    .all()
+                )
+                recent_videos = list(recent)
+
+            ideas = _run_async(
+                researcher.research_and_generate(
+                    n=n * 2,
+                    categories=categories,
+                    recent_videos=recent_videos,
+                )
+            )
+
+            if ideas:
+                # Use the concept field as the topic (it has the full description)
+                topics = [f"{idea.title}: {idea.concept}" for idea in ideas]
+                research_used = True
+                logger.info(
+                    "nightly_batch_research_topics",
+                    task_id=task_id,
+                    ideas_count=len(ideas),
+                    top_score=ideas[0].overall_score if ideas else 0,
+                )
+            else:
+                logger.warning("nightly_batch_research_empty", task_id=task_id)
+
+        except Exception as e:
+            logger.warning(
+                "nightly_batch_research_failed",
+                task_id=task_id,
+                error=str(e),
+            )
+
+    # Fall back to basic LLM topic generation if research didn't produce results
+    if not topics:
+        with get_session_context() as session:
+            project = session.get(ProjectModel, project_uuid)
+            if not project:
+                return {"success": False, "error": f"Project not found: {project_id}"}
+
+            llm_provider = None
+            if settings.topic_provider == "llm":
+                llm_provider = _get_llm_provider()
+
+            generator = TopicGenerator(session, llm_provider=llm_provider)
+            topics_result = _run_async(generator.generate(project_uuid, n=n * 2, temperature=0.8))
+            topics = [t.topic for t in topics_result]
 
     if not topics:
         logger.error(
@@ -554,6 +628,7 @@ def run_nightly_batch_task(
         "project_id": project_id,
         "batch_id": batch_result.get("batch_id"),
         "topics_generated": len(topics),
+        "research_driven": research_used,
         "jobs_created": len(job_ids),
         "optimization_context_built": optimization_context_built,
         "jobs_dispatched": len(dispatched),

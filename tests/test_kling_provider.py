@@ -18,12 +18,13 @@ class TestDurationMapping:
     @pytest.mark.parametrize(
         ("input_seconds", "expected"),
         [
-            (1, "5"),
-            (3, "5"),
+            (1, "3"),   # clamped to min 3
+            (3, "3"),
             (5, "5"),
-            (6, "10"),
-            (8, "10"),
+            (8, "8"),
             (10, "10"),
+            (15, "15"),
+            (20, "15"),  # clamped to max 15
         ],
     )
     def test_map_duration(self, input_seconds: int, expected: str) -> None:
@@ -86,11 +87,11 @@ class TestKlingGenerate:
             result = await provider.generate(request)
 
         assert result.success is True
-        assert result.duration_seconds == 10.0  # 8 > 5 → mapped to "10"
+        assert result.duration_seconds == 8.0  # directly mapped in 3-15 range
 
         call_args = mock_subscribe.call_args[1]["arguments"]
         assert call_args["prompt"] == "cinematic noir, A cat walking"
-        assert call_args["duration"] == "10"
+        assert call_args["duration"] == "8"
 
     @pytest.mark.asyncio
     async def test_generate_with_custom_negative_prompt(self) -> None:

@@ -25,7 +25,9 @@ from shorts_engine.adapters.renderer.base import RendererProvider, RenderRequest
 from shorts_engine.adapters.renderer.creatomate import (
     CreatomateRenderRequest,
     ImageCompositionRequest,
+    TimedCaption,
 )
+from shorts_engine.config import settings
 from shorts_engine.logging import get_logger
 
 logger = get_logger(__name__)
@@ -50,7 +52,7 @@ except ImportError:
     MOVIEPY_AVAILABLE = False
 
 CROSSFADE_DURATION = 0.4
-BACKGROUND_MUSIC_VOLUME = 0.3
+BACKGROUND_MUSIC_VOLUME = 0.12
 
 
 class MoviePyRenderer(RendererProvider):
@@ -236,7 +238,10 @@ class MoviePyRenderer(RendererProvider):
 
             # Build and add caption overlay clips
             caption_clips = self._build_caption_clips(
-                request.scenes, request.width, request.height
+                request.scenes,
+                request.width,
+                request.height,
+                timed_captions=request.timed_captions,
             )
             if caption_clips:
                 final_video = CompositeVideoClip(
@@ -285,7 +290,7 @@ class MoviePyRenderer(RendererProvider):
 
                 audio_clips.append(voiceover)
 
-            # Add background music (reduced volume with fade-out)
+            # Add background music (low mix under narration, with gentle fades)
             if request.background_music_url:
                 music_path, is_temp = await self._download_file(
                     request.background_music_url, "music"
@@ -298,10 +303,24 @@ class MoviePyRenderer(RendererProvider):
                     repeats = int(final_video.duration / music.duration) + 1
                     music = concatenate_audioclips([music] * repeats)
                 music = music.subclipped(0, final_video.duration)
-                music = music.with_volume_scaled(request.background_music_volume)
-                # Add 2-second fade-out
-                fade_duration = min(2.0, final_video.duration / 4)
-                music = music.with_effects([afx.AudioFadeOut(fade_duration)])
+
+                has_voiceover = request.voiceover_url is not None
+                base_volume = request.background_music_volume or BACKGROUND_MUSIC_VOLUME
+                if has_voiceover:
+                    base_volume = min(base_volume, settings.background_music_ducked_max_volume)
+
+                music = music.with_volume_scaled(base_volume)
+
+                fade_in = min(settings.background_music_fade_in_seconds, final_video.duration / 4)
+                fade_out = min(settings.background_music_fade_out_seconds, final_video.duration / 4)
+                effects: list[Any] = []
+                if fade_in > 0:
+                    effects.append(afx.AudioFadeIn(fade_in))
+                if fade_out > 0:
+                    effects.append(afx.AudioFadeOut(fade_out))
+                if effects:
+                    music = music.with_effects(effects)
+
                 audio_clips.append(music)
 
             # Composite audio tracks
@@ -426,6 +445,19 @@ class MoviePyRenderer(RendererProvider):
             # Concatenate with transitions
             final_video = concatenate_videoclips(video_clips, method="compose")
 
+            # Burn in captions/subtitles (timed captions preferred).
+            caption_clips = self._build_caption_clips(
+                request.images,
+                request.width,
+                request.height,
+                timed_captions=request.timed_captions,
+            )
+            if caption_clips:
+                final_video = CompositeVideoClip(
+                    [final_video] + caption_clips,
+                    size=(request.width, request.height),
+                )
+
             # Handle audio tracks
             audio_clips = []
 
@@ -475,7 +507,23 @@ class MoviePyRenderer(RendererProvider):
                     repeats = int(final_video.duration / music.duration) + 1
                     music = concatenate_audioclips([music] * repeats)
                 music = music.subclipped(0, final_video.duration)
-                music = music.with_volume_scaled(request.background_music_volume)
+
+                has_voiceover = request.voiceover_url is not None
+                base_volume = request.background_music_volume or BACKGROUND_MUSIC_VOLUME
+                if has_voiceover:
+                    base_volume = min(base_volume, settings.background_music_ducked_max_volume)
+                music = music.with_volume_scaled(base_volume)
+
+                fade_in = min(settings.background_music_fade_in_seconds, final_video.duration / 4)
+                fade_out = min(settings.background_music_fade_out_seconds, final_video.duration / 4)
+                effects: list[Any] = []
+                if fade_in > 0:
+                    effects.append(afx.AudioFadeIn(fade_in))
+                if fade_out > 0:
+                    effects.append(afx.AudioFadeOut(fade_out))
+                if effects:
+                    music = music.with_effects(effects)
+
                 audio_clips.append(music)
 
             if audio_clips:
@@ -568,49 +616,112 @@ class MoviePyRenderer(RendererProvider):
         scenes: list[Any],
         w: int,
         h: int,
+        timed_captions: list[TimedCaption] | None = None,
     ) -> list[Any]:
-        """Create TikTok-style caption TextClips for each scene.
+        """Create burned-in caption clips.
 
-        Captions are white uppercase text with a black stroke, positioned
-        at 82% vertical height. Returns empty list if TextClip is unavailable.
+        Priority:
+        1) timed_captions (audio-aligned subtitles)
+        2) scene.caption_text fallback
         """
         if not MOVIEPY_AVAILABLE:
             return []
 
         try:
-            # Test that TextClip works (requires ImageMagick)
             TextClip
         except Exception:
             return []
 
         captions: list[Any] = []
-        current_time = 0.0
-        crossfade = CROSSFADE_DURATION if len(scenes) > 1 else 0.0
+        entries: list[tuple[str, float, float]] = []
 
-        for scene in scenes:
-            if scene.caption_text:
-                try:
-                    txt = TextClip(
-                        text=scene.caption_text.upper(),
-                        font_size=60,
-                        color="white",
-                        font="Liberation-Sans-Bold",
-                        stroke_color="black",
-                        stroke_width=3,
-                        method="caption",
-                        size=(int(w * 0.9), None),
-                        text_align="center",
-                    )
-                    txt = (
-                        txt.with_position(("center", int(h * 0.82)))
-                        .with_start(current_time)
-                        .with_duration(scene.duration_seconds)
-                    )
-                    captions.append(txt)
-                except Exception as e:
-                    logger.debug("caption_skipped", error=str(e))
+        if timed_captions:
+            for c in timed_captions:
+                duration = max(0.1, float(c.end_seconds) - float(c.start_seconds))
+                entries.append((c.text, max(0.0, float(c.start_seconds)), duration))
+        else:
+            current_time = 0.0
+            crossfade = CROSSFADE_DURATION if len(scenes) > 1 else 0.0
+            for scene in scenes:
+                if scene.caption_text:
+                    entries.append((scene.caption_text, current_time, float(scene.duration_seconds)))
+                current_time += scene.duration_seconds - crossfade
 
-            current_time += scene.duration_seconds - crossfade
+        # Use Pillow for pixel-perfect caption rendering (no clipping issues)
+        from PIL import Image, ImageDraw, ImageFont
+        import numpy as np
+
+        font_size = 28
+        font_paths = [
+            "C:/Windows/Fonts/arialbd.ttf",
+            "C:/Windows/Fonts/arial.ttf",
+            "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+            "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf",
+        ]
+        font = None
+        for fp in font_paths:
+            try:
+                font = ImageFont.truetype(fp, font_size)
+                break
+            except Exception:
+                continue
+        if font is None:
+            font = ImageFont.load_default()
+
+        for text, start, duration in entries:
+            if not text:
+                continue
+            try:
+                # Render caption as RGBA image with Pillow
+                overlay = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+                draw = ImageDraw.Draw(overlay)
+                text_str = str(text).strip()
+
+                # Word-wrap to 80% of frame width
+                max_width = int(w * 0.80)
+                lines: list[str] = []
+                current_line: list[str] = []
+                for word in text_str.split():
+                    test_line = " ".join(current_line + [word])
+                    bbox = draw.textbbox((0, 0), test_line, font=font)
+                    if bbox[2] - bbox[0] > max_width and current_line:
+                        lines.append(" ".join(current_line))
+                        current_line = [word]
+                    else:
+                        current_line.append(word)
+                if current_line:
+                    lines.append(" ".join(current_line))
+
+                line_height = font_size + 6
+                total_text_height = len(lines) * line_height
+                y_bottom = int(h * 0.82)
+                y_start = y_bottom - total_text_height
+
+                for j, line in enumerate(lines):
+                    bbox = draw.textbbox((0, 0), line, font=font)
+                    text_w = bbox[2] - bbox[0]
+                    x = (w - text_w) // 2
+                    y = y_start + j * line_height
+                    stroke = 2
+                    for dx in [-stroke, 0, stroke]:
+                        for dy in [-stroke, 0, stroke]:
+                            if dx == 0 and dy == 0:
+                                continue
+                            draw.text((x + dx, y + dy), line, font=font, fill=(0, 0, 0, 255))
+                    draw.text((x, y), line, font=font, fill=(255, 255, 255, 255))
+
+                overlay_np = np.array(overlay)
+
+                from moviepy import ImageClip
+                img_clip = (
+                    ImageClip(overlay_np)
+                    .with_duration(duration)
+                    .with_start(start)
+                    .with_position((0, 0))
+                )
+                captions.append(img_clip)
+            except Exception as e:
+                logger.debug("caption_skipped", error=str(e))
 
         return captions
 

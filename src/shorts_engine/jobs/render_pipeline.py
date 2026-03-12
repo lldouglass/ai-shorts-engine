@@ -12,6 +12,8 @@ All tasks support:
 """
 
 from datetime import UTC, datetime
+from pathlib import Path
+import re
 from typing import Any
 from uuid import UUID
 
@@ -26,6 +28,7 @@ from shorts_engine.adapters.renderer.creatomate import (
     ImageSceneClip,
     MotionParams,
     SceneClip,
+    TimedCaption,
 )
 from shorts_engine.adapters.renderer.stub import StubRendererProvider
 from shorts_engine.adapters.voiceover.base import VoiceoverProvider
@@ -52,6 +55,223 @@ from shorts_engine.utils import run_async
 from shorts_engine.worker import celery_app
 
 logger = get_logger(__name__)
+
+
+def _clean_caption_text(text: str) -> str:
+    """Normalize spacing and punctuation in caption text."""
+    cleaned = " ".join((text or "").strip().split())
+    cleaned = re.sub(r"\s+([,.!?;:])", r"\1", cleaned)
+    return cleaned.strip()
+
+
+def _build_scene_captions_from_narration(
+    narration_text: str,
+    scenes: list[SceneModel],
+) -> list[str]:
+    """Fallback scene-aligned captions when no timing data is available."""
+    cleaned = _clean_caption_text(narration_text)
+    if not cleaned or not scenes:
+        return []
+
+    words = cleaned.split(" ")
+    total_words = len(words)
+    total_duration = sum(max(float(scene.duration_seconds), 0.1) for scene in scenes)
+
+    captions: list[str] = []
+    word_idx = 0
+    remaining_words = total_words
+    remaining_duration = total_duration
+
+    for i, scene in enumerate(scenes):
+        scenes_left = len(scenes) - i
+        scene_duration = max(float(scene.duration_seconds), 0.1)
+
+        if i == len(scenes) - 1:
+            chunk_words = words[word_idx:]
+        else:
+            proportional = int(round((remaining_words * scene_duration) / max(remaining_duration, 0.1)))
+            max_for_scene = max(8, int(scene_duration * 3.0))
+            target = max(3, min(proportional, max_for_scene))
+            max_allow = max(1, remaining_words - (scenes_left - 1))
+            target = min(target, max_allow)
+            chunk_words = words[word_idx: word_idx + target]
+
+        captions.append(_clean_caption_text(" ".join(chunk_words)))
+
+        word_idx += len(chunk_words)
+        remaining_words = total_words - word_idx
+        remaining_duration -= scene_duration
+
+    return captions
+
+
+def _expand_word_boundary_tokens(
+    boundaries: list[dict[str, Any]],
+) -> list[dict[str, float | str]]:
+    """Expand provider word boundaries into per-token timing entries.
+
+    Some providers return multi-word chunks (e.g. "Wall Street").
+    We split those into per-word timing by evenly distributing duration.
+    """
+    tokens: list[dict[str, float | str]] = []
+
+    for boundary in boundaries:
+        text = _clean_caption_text(str(boundary.get("text") or ""))
+        if not text:
+            continue
+
+        start = float(boundary.get("start_seconds") or 0.0)
+        end = float(boundary.get("end_seconds") or start)
+        end = max(end, start + 0.04)
+
+        parts = text.split(" ")
+        if len(parts) == 1:
+            tokens.append(
+                {
+                    "text": parts[0],
+                    "start_seconds": start,
+                    "end_seconds": end,
+                }
+            )
+            continue
+
+        duration = max(end - start, 0.04)
+        per_word = duration / len(parts)
+        for idx, part in enumerate(parts):
+            part_start = start + per_word * idx
+            part_end = start + per_word * (idx + 1)
+            tokens.append(
+                {
+                    "text": part,
+                    "start_seconds": part_start,
+                    "end_seconds": part_end,
+                }
+            )
+
+    return tokens
+
+
+def _build_timed_captions_from_word_boundaries(
+    word_boundaries: list[dict[str, Any]],
+) -> list[TimedCaption]:
+    """Build readable subtitle chunks from word-level timing boundaries.
+
+    Defaults follow short-form caption best practices:
+    - 3-7 words per chunk
+    - ~0.6-2.8s on screen
+    - break on sentence punctuation when possible
+    """
+    tokens = _expand_word_boundary_tokens(word_boundaries)
+    if not tokens:
+        return []
+
+    min_words = max(1, int(settings.subtitle_chunk_min_words))
+    max_words = max(min_words, int(settings.subtitle_chunk_max_words))
+    min_seconds = max(0.2, float(settings.subtitle_chunk_min_seconds))
+    max_seconds = max(min_seconds, float(settings.subtitle_chunk_max_seconds))
+
+    chunks: list[TimedCaption] = []
+    i = 0
+    total = len(tokens)
+
+    while i < total:
+        start = float(tokens[i]["start_seconds"])
+        words: list[str] = []
+        end = start
+
+        while i < total:
+            token_text = str(tokens[i]["text"])
+            token_end = float(tokens[i]["end_seconds"])
+
+            if not words:
+                words.append(token_text)
+                end = token_end
+                i += 1
+                continue
+
+            proposed_word_count = len(words) + 1
+            proposed_duration = token_end - start
+            should_break = False
+
+            if proposed_word_count > max_words:
+                should_break = True
+            if proposed_duration > max_seconds:
+                should_break = True
+            if len(words) >= min_words and words[-1][-1:] in {".", "!", "?"}:
+                should_break = True
+
+            if should_break:
+                break
+
+            words.append(token_text)
+            end = token_end
+            i += 1
+
+        # Ensure minimum readability requirements.
+        while i < total and (len(words) < min_words or (end - start) < min_seconds):
+            token_text = str(tokens[i]["text"])
+            token_end = float(tokens[i]["end_seconds"])
+            words.append(token_text)
+            end = token_end
+            i += 1
+            if len(words) >= max_words:
+                break
+
+        text = _clean_caption_text(" ".join(words))
+        if text:
+            chunks.append(
+                TimedCaption(
+                    text=text,
+                    start_seconds=max(0.0, start),
+                    end_seconds=max(start + 0.1, end),
+                )
+            )
+
+    return chunks
+
+
+def _resolve_background_music_defaults(
+    background_music_url: str | None,
+    background_music_volume: float | None,
+) -> tuple[str | None, float]:
+    """Resolve background-music defaults from settings.
+
+    Returns:
+        (music_url_or_path, effective_volume)
+    """
+    effective_volume = (
+        float(background_music_volume)
+        if background_music_volume is not None
+        else float(settings.background_music_default_volume)
+    )
+
+    if not background_music_url and settings.background_music_enabled:
+        candidate = settings.background_music_default_url
+        if candidate:
+            if candidate.startswith(("http://", "https://", "file://")):
+                background_music_url = candidate
+            else:
+                candidate_path = Path(candidate)
+                if not candidate_path.is_absolute():
+                    # Try repo root first, then cwd.
+                    repo_root = Path(__file__).resolve().parents[3]
+                    repo_candidate = repo_root / candidate_path
+                    cwd_candidate = Path.cwd() / candidate_path
+
+                    if repo_candidate.exists():
+                        candidate_path = repo_candidate
+                    elif cwd_candidate.exists():
+                        candidate_path = cwd_candidate
+
+                if candidate_path.exists():
+                    background_music_url = str(candidate_path)
+                else:
+                    logger.warning(
+                        "default_background_music_not_found",
+                        candidate=str(candidate_path),
+                    )
+
+    return background_music_url, effective_volume
 
 
 def get_voiceover_provider() -> VoiceoverProvider:
@@ -256,6 +476,11 @@ def generate_voiceover_task(
                 "asset_id": str(asset.id),
                 "url": stored.url or f"file://{stored.file_path}",
                 "duration_seconds": result.duration_seconds,
+                # Pass narration script downstream so render can build
+                # voiceover-aligned captions instead of generic scene labels.
+                "narration_script": narration_script,
+                # Audio-first subtitle timing from TTS provider (when available).
+                "subtitle_word_boundaries": (result.metadata or {}).get("word_boundaries", []),
             }
 
         except Exception as e:
@@ -283,8 +508,9 @@ def render_final_video_task(
     self: Any,  # noqa: ARG001
     voiceover_result: dict[str, Any] | None = None,  # First - receives chain result
     video_job_id: str | None = None,  # Second - passed as kwarg
-    include_captions: bool = False,  # Default to no on-screen text
+    include_captions: bool = True,  # Default to on-screen text for retention
     background_music_url: str | None = None,
+    background_music_volume: float | None = None,
 ) -> dict[str, Any]:
     """Render the final video composition.
 
@@ -337,6 +563,19 @@ def render_final_video_task(
         job.stage = "rendering"
         session.commit()
 
+        # Resolve background music defaults (from settings) when caller didn't pass one.
+        background_music_url, effective_music_volume = _resolve_background_music_defaults(
+            background_music_url,
+            background_music_volume,
+        )
+        if background_music_url:
+            logger.info(
+                "render_background_music_enabled",
+                video_job_id=video_job_id,
+                music_source=background_music_url,
+                music_volume=effective_music_volume,
+            )
+
         # Gather scene clips
         scenes = (
             session.execute(
@@ -350,6 +589,43 @@ def render_final_video_task(
 
         if not scenes:
             raise ValueError("No scenes found for rendering")
+
+        # Build captions from voiceover timing when available (preferred),
+        # with scene-level narration fallback.
+        narration_for_captions: str | None = None
+        subtitle_word_boundaries: list[dict[str, Any]] = []
+
+        if include_captions:
+            if voiceover_result and voiceover_result.get("narration_script"):
+                narration_for_captions = str(voiceover_result.get("narration_script") or "")
+            elif job.story and job.story.narrative_text:
+                narration_for_captions = job.story.narrative_text
+
+            if voiceover_result and voiceover_result.get("subtitle_word_boundaries"):
+                subtitle_word_boundaries = list(
+                    voiceover_result.get("subtitle_word_boundaries") or []
+                )
+
+        timed_captions: list[TimedCaption] = []
+        if include_captions and subtitle_word_boundaries:
+            timed_captions = _build_timed_captions_from_word_boundaries(subtitle_word_boundaries)
+            logger.info(
+                "render_using_timed_voice_subtitles",
+                video_job_id=video_job_id,
+                timed_caption_chunks=len(timed_captions),
+            )
+
+        scene_narration_captions: list[str] = []
+        if include_captions and not timed_captions and narration_for_captions:
+            scene_narration_captions = _build_scene_captions_from_narration(
+                narration_for_captions,
+                scenes,
+            )
+            logger.info(
+                "render_using_scene_narration_captions",
+                video_job_id=video_job_id,
+                caption_chunks=len(scene_narration_captions),
+            )
 
         # Detect if we're in image mode by checking asset types
         # Check if first scene has an image asset
@@ -368,7 +644,17 @@ def render_final_video_task(
         scene_clips: list[SceneClip] = []
         image_clips: list[ImageSceneClip] = []
 
-        for scene in scenes:
+        for scene_index, scene in enumerate(scenes):
+            # Caption source priority:
+            # 1) narration-aligned chunk (voiceover subtitles)
+            # 2) scene caption beat fallback
+            caption_text: str | None = None
+            if include_captions and not timed_captions:
+                if scene_index < len(scene_narration_captions):
+                    caption_text = scene_narration_captions[scene_index] or None
+                if not caption_text:
+                    caption_text = scene.caption_beat
+
             if is_image_mode:
                 # Get the scene's image asset
                 img_asset = session.execute(
@@ -413,7 +699,7 @@ def render_final_video_task(
                         image_url=img_url,
                         duration_seconds=scene.duration_seconds,
                         motion=motion,
-                        caption_text=scene.caption_beat if include_captions else None,
+                        caption_text=caption_text,
                         scene_number=scene.scene_number,
                         transition=motion.transition,
                         transition_duration=motion.transition_duration,
@@ -447,13 +733,14 @@ def render_final_video_task(
                     SceneClip(
                         video_url=clip_url,
                         duration_seconds=scene.duration_seconds,
-                        caption_text=scene.caption_beat if include_captions else None,
+                        caption_text=caption_text,
                         scene_number=scene.scene_number,
                     )
                 )
 
         # Get voiceover URL if available
         voiceover_url = None
+        voiceover_asset: AssetModel | None = None
         use_local = settings.renderer_provider == "moviepy"
 
         if (
@@ -463,8 +750,8 @@ def render_final_video_task(
         ):
             voiceover_url = voiceover_result.get("url")
 
-        # If no voiceover from result, check for existing asset
-        if not voiceover_url:
+        # Check for existing voiceover asset (URL fallback + subtitle metadata fallback)
+        if not voiceover_url or (include_captions and not timed_captions):
             voiceover_asset = session.execute(
                 select(AssetModel).where(
                     AssetModel.video_job_id == job_uuid,
@@ -474,10 +761,23 @@ def render_final_video_task(
             ).scalar_one_or_none()
 
             if voiceover_asset:
-                if use_local and voiceover_asset.file_path:
-                    voiceover_url = str(voiceover_asset.file_path)
-                else:
-                    voiceover_url = voiceover_asset.url or f"file://{voiceover_asset.file_path}"
+                if not voiceover_url:
+                    if use_local and voiceover_asset.file_path:
+                        voiceover_url = str(voiceover_asset.file_path)
+                    else:
+                        voiceover_url = (
+                            voiceover_asset.url or f"file://{voiceover_asset.file_path}"
+                        )
+
+                if include_captions and not timed_captions and voiceover_asset.metadata_:
+                    boundaries = voiceover_asset.metadata_.get("word_boundaries") or []
+                    if boundaries:
+                        timed_captions = _build_timed_captions_from_word_boundaries(boundaries)
+                        logger.info(
+                            "render_using_stored_timed_subtitles",
+                            video_job_id=video_job_id,
+                            timed_caption_chunks=len(timed_captions),
+                        )
 
         # For local renderers, strip file:// prefix to use raw path
         if use_local and voiceover_url and voiceover_url.startswith("file://"):
@@ -500,6 +800,8 @@ def render_final_video_task(
                         images=image_clips,
                         voiceover_url=voiceover_url,
                         background_music_url=background_music_url,
+                        background_music_volume=effective_music_volume,
+                        timed_captions=timed_captions if include_captions else None,
                         width=1080,
                         height=1920,
                         fps=30,
@@ -511,6 +813,8 @@ def render_final_video_task(
                         scenes=scene_clips,
                         voiceover_url=voiceover_url,
                         background_music_url=background_music_url,
+                        background_music_volume=effective_music_volume,
+                        timed_captions=timed_captions if include_captions else None,
                         width=1080,
                         height=1920,
                         fps=30,
@@ -843,8 +1147,6 @@ def critique_final_video_task(
     Returns:
         Dict with critique results and regeneration info
     """
-    from pathlib import Path
-
     from shorts_engine.services.final_video_critique import FinalVideoCritiqueService
 
     task_id = self.request.id
@@ -1032,10 +1334,11 @@ def run_render_pipeline_task(
     self: Any,  # noqa: ARG001
     video_job_id: str,
     include_voiceover: bool = True,
-    include_captions: bool = False,  # Default to no on-screen text
+    include_captions: bool = True,  # Default to on-screen text for retention
     voice_id: str | None = None,
     narration_script: str | None = None,
     background_music_url: str | None = None,
+    background_music_volume: float | None = None,
     skip_critique: bool = False,
 ) -> dict[str, Any]:
     """Run the full render pipeline.
@@ -1053,6 +1356,7 @@ def run_render_pipeline_task(
         voice_id: Optional voice ID for voiceover
         narration_script: Optional custom narration script
         background_music_url: Optional background music URL
+        background_music_volume: Optional music volume (0.0-1.0). Falls back to configured default
         skip_critique: Whether to skip the final video critique step
 
     Returns:
@@ -1084,6 +1388,7 @@ def run_render_pipeline_task(
                     video_job_id=video_job_id,
                     include_captions=include_captions,
                     background_music_url=background_music_url,
+                    background_music_volume=background_music_volume,
                 ),
                 critique_final_video_task.s(video_job_id=video_job_id),
                 mark_ready_to_publish_task.s(video_job_id=video_job_id),
@@ -1100,6 +1405,7 @@ def run_render_pipeline_task(
                     video_job_id=video_job_id,
                     include_captions=include_captions,
                     background_music_url=background_music_url,
+                    background_music_volume=background_music_volume,
                 ),
                 mark_ready_to_publish_task.s(video_job_id=video_job_id),
             )
@@ -1112,6 +1418,7 @@ def run_render_pipeline_task(
                     voiceover_result=None,
                     include_captions=include_captions,
                     background_music_url=background_music_url,
+                    background_music_volume=background_music_volume,
                 ),
                 critique_final_video_task.s(video_job_id=video_job_id),
                 mark_ready_to_publish_task.s(video_job_id=video_job_id),
@@ -1124,6 +1431,7 @@ def run_render_pipeline_task(
                     voiceover_result=None,
                     include_captions=include_captions,
                     background_music_url=background_music_url,
+                    background_music_volume=background_music_volume,
                 ),
                 mark_ready_to_publish_task.s(video_job_id=video_job_id),
             )

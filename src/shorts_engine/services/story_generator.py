@@ -9,6 +9,7 @@ from shorts_engine.adapters.llm.openai import OpenAIProvider
 from shorts_engine.adapters.llm.stub import StubLLMProvider
 from shorts_engine.config import settings
 from shorts_engine.logging import get_logger
+from shorts_engine.strategies.engagement import COMMENT_STRATEGIES, CTR_STRATEGIES, VIDEO_STRUCTURE
 
 logger = get_logger(__name__)
 
@@ -66,6 +67,12 @@ STRUCTURE:
 2. ESCALATION (3-4 sentences) - Situation gets worse, details emerge
 3. TWIST (final 1-2 sentences) - Gut-punch realization that reframes everything
 
+ENGAGEMENT (CRITICAL - every story must support these):
+- The twist/ending MUST make viewers want to COMMENT (debate the meaning, share theories)
+- End with something ambiguous enough that people argue about it in comments
+- Make it SHAREABLE - something people will send to friends saying "you NEED to see this"
+- The story should leave viewers wanting MORE (sets up "Part 2?" comments naturally)
+
 RULES:
 - 100-150 words maximum
 - ONE protagonist (first name only)
@@ -78,7 +85,9 @@ Return valid JSON:
     "title": "Short, cryptic title (max 50 chars)",
     "narrative_text": "The full story",
     "narrative_style": "second-person|third-person",
-    "suggested_preset": "DARK_DYSTOPIAN_ANIME|CINEMATIC_REALISM"
+    "suggested_preset": "DARK_DYSTOPIAN_ANIME|CINEMATIC_REALISM",
+    "comment_hook": "The comment prompt to use (e.g., 'Would you trust it? Comment yes or no')",
+    "engagement_angle": "Why viewers will comment/share this specific story"
 }
 
 Style preset guidance:

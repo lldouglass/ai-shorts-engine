@@ -15,6 +15,7 @@ from shorts_engine.adapters.llm.stub import StubLLMProvider
 from shorts_engine.config import get_settings
 from shorts_engine.logging import get_logger
 from shorts_engine.presets.styles import StylePreset, get_preset
+from shorts_engine.strategies.engagement import COMMENT_STRATEGIES, CTR_STRATEGIES
 
 logger = get_logger(__name__)
 
@@ -179,12 +180,22 @@ Guidelines:
 4. CONTINUITY - Maintain consistent character appearances across frames
 5. PACING - Vary shot types (close-up, medium, wide) for visual rhythm
 6. CLIMAX - Build to a visual peak around frame {frame_count - 2}
-7. ENDING - Final frame should be memorable/shareable
+7. CTA ENDING - Final frame MUST support a call-to-action overlay.
+   The CAPTION for the final frame should be an engagement prompt like:
+   "Comment your car below", "Which would you pick?", "Full list - link in bio"
+   Do NOT end with a logo or generic "follow for more".
 
 For each frame, provide:
 - FRAME N: [detailed image prompt, 2-3 sentences]
 - CAPTION: [short text overlay, max 10 words]
 - SHOT: [close-up / medium / wide / extreme close-up]
+
+CAPTION RULES (critical for engagement):
+- Frame 1 caption = scroll-stopping hook (curiosity gap, shocking stat, bold question)
+- Middle frame captions = value delivery, reinforce the story
+- Final frame caption = call-to-action (comment prompt OR website tease)
+- All captions must work as text overlays for silent viewers (90%+ watch without sound)
+- Keep text in center-safe zone (middle 70% of screen)
 
 Focus on static moments with high emotional impact - anime "freeze frames"."""
 

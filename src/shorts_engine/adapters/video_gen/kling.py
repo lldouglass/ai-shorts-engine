@@ -1,6 +1,6 @@
 """Kling video generation provider via fal.ai.
 
-Supports both text-to-video (Kling 2.6 Pro) and image-to-video (Kling O1)
+Supports both text-to-video and image-to-video (Kling 3.0)
 for frame chaining across scenes.
 """
 
@@ -26,16 +26,14 @@ class KlingProvider(VideoGenProvider):
     Uses the fal-client SDK with subscribe_async() for automatic polling.
 
     Models:
-    - FAL_MODEL: Kling 2.6 Pro text-to-video (scene 1 or no reference image)
-    - FAL_MODEL_IMG2VID: Kling O1 image-to-video (scenes 2+ with frame chaining)
+    - FAL_MODEL: Kling 3.0 text-to-video (scene 1 or no reference image)
+    - FAL_MODEL_IMG2VID: Kling 3.0 image-to-video (scenes 2+ with frame chaining)
 
-    Duration mapping:
-    - duration_seconds <= 5 → "5" (fal string format)
-    - duration_seconds > 5  → "10"
+    Duration: 3-15 seconds (clamped), passed as string to fal API.
     """
 
-    FAL_MODEL = "fal-ai/kling-video/v2.6/pro/text-to-video"
-    FAL_MODEL_IMG2VID = "fal-ai/kling-video/o1/image-to-video"
+    FAL_MODEL = "fal-ai/kling-video/v3/standard/text-to-video"
+    FAL_MODEL_IMG2VID = "fal-ai/kling-video/v3/standard/image-to-video"
 
     def __init__(self, api_key: str | None = None) -> None:
         self.api_key = api_key or getattr(settings, "fal_api_key", None)
@@ -51,11 +49,12 @@ class KlingProvider(VideoGenProvider):
 
     @staticmethod
     def _map_duration(duration_seconds: int) -> str:
-        """Map integer duration to fal's string duration format."""
-        return "5" if duration_seconds <= 5 else "10"
+        """Map integer duration to fal's string duration format (3-15s)."""
+        clamped = max(3, min(15, duration_seconds))
+        return str(clamped)
 
     async def generate(self, request: VideoGenRequest) -> VideoGenResult:
-        """Generate a video using Kling 2.6 Pro via fal.ai.
+        """Generate a video using Kling 3.0 via fal.ai.
 
         Uses fal_client.subscribe_async() which handles polling automatically.
 

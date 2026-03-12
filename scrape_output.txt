@@ -1,0 +1,45 @@
+﻿
+==================================================
+  Content Research Scraper
+==================================================
+
+  Scraping TikTok trends (Playwright)...
+2026-02-23 15:35:05 [info     ] tiktok_research_started        limit=50 region=US
+2026-02-23 15:35:09 [debug    ] tiktok_api_intercepted         items=7 url='https://www.tiktok.com/api/explore/item_list/?WebIdLastTime=1771886107&aid=1988&app_language=en&app_'
+2026-02-23 15:35:11 [debug    ] tiktok_api_intercepted         items=7 url='https://www.tiktok.com/api/explore/item_list/?WebIdLastTime=1771886107&aid=1988&app_language=en&app_'
+2026-02-23 15:35:11 [debug    ] tiktok_api_intercepted         items=7 url='https://www.tiktok.com/api/explore/item_list/?WebIdLastTime=1771886107&aid=1988&app_language=en&app_'
+2026-02-23 15:35:19 [info     ] tiktok_items_captured          count=21
+2026-02-23 15:35:19 [info     ] tiktok_playwright_signals      count=18
+2026-02-23 15:35:20 [info     ] tiktok_research_completed      success=True total_signals=18
+  Found 18 TikTok signals
+  Scraping YouTube trends (OAuth)...
+2026-02-23 15:35:20 [info     ] youtube_research_started       categories=None limit=50 region=US
+2026-02-23 15:35:21 [info     ] youtube_api_key_403_switching_to_oauth
+2026-02-23 15:35:21 [info     ] youtube_oauth_token_refreshed  expires_in=3599
+2026-02-23 15:35:21 [info     ] youtube_trending_fetched       count=50
+2026-02-23 15:35:24 [info     ] youtube_research_completed     success=True total_signals=50
+  Found 50 YouTube signals
+
+  Saved to: storage\research\signals_2026-02-23_223524.json
+  Latest:   storage\research\latest_signals.json
+
+==================================================
+  Summary
+==================================================
+
+  TikTok: 18 signals
+        447,700,000 views | #funnyvideos #animation #aicat #orangecat #cartoon 
+        366,300,000 views | #snow
+        365,300,000 views | #Funny #cutepets 
+        355,600,000 views | They laughed when she started. TheyΓÇÖll go silent when she ch
+        283,500,000 views | #foryou #funnyai #tiktokfunny #viral #trending 
+
+  YouTube: 50 signals
+         21,212,913 views | [SHORT] Lunch touching video ≡ƒÖâ | The most viral  video by maabe
+         17,415,577 views | [SHORT] Makkah Al Haram≡ƒòï 1st iftar≡ƒÿì #shorts #short #viral #vlog
+         15,328,750 views | [SHORT] Como est├í sua alimenta├º├úo hoje? ≡ƒìö≡ƒÑù @ApolloSant #viral #
+         14,082,245 views | [SHORT] super singer season junior 10 ≡ƒñú α«░α«╛α««α«░α»ì α«àα«»α»ìα«»α«╛ ultimate ≡ƒñú 
+         13,877,098 views | [SHORT] Gak sengaja #shorts #viral #comedy
+
+  Raw data saved. Feed to Kade for synthesis.
+
