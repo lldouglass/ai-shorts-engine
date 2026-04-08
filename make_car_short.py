@@ -53,14 +53,13 @@ def generate_car_image(car_name: str, color: str = "dark green", style_notes: st
     """Generate a Pixar Cars-style character image via Gemini Nano Banana."""
     safe_name = car_name.lower().replace(" ", "_")
     prompt = (
-        f"A Pixar Cars style 3D animated {car_name} character, front view, facing camera directly. "
-        f"{color.capitalize()} metallic paint, expressive cartoon eyes on the windshield with eyelids "
-        f"and eyebrows, wide talking mouth on the lower bumper/grille showing personality. "
-        f"The car looks self-aware and slightly embarrassed, like it knows its own flaws. "
-        f"Warm cozy mechanic garage background with tools, spare tires, and warm golden lighting. "
-        f"Portrait composition, centered, vertical 9:16 aspect ratio. "
-        f"Highly detailed 3D render, Pixar-quality, cinematic lighting. "
-        f"The mouth on the bumper MUST be prominent with clear lip definition. "
+        f"A stylized 3D animated {car_name} talking-car character, front view or slight near-front angle, facing camera directly. "
+        f"{color.capitalize()} metallic paint, clear readable face area, strong mouth zone on the lower bumper/grille for HeyGen lip sync. "
+        f"Centered portrait composition with simple background and minimal clutter. "
+        f"Use one subtle script-relevant warning cue only if needed. "
+        f"No mechanic, no ensemble scene, no copied-movie look. "
+        f"Vertical 9:16 aspect ratio, upright content, high-detail render. "
+        f"The mouth zone on the bumper MUST be prominent, unobstructed, and easy to animate. "
         f"{style_notes}"
     )
     print(f"\n--- Step 1: Generate {car_name} character image ---")

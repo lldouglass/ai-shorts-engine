@@ -4,8 +4,28 @@ import sys
 import base64
 import requests
 from pathlib import Path
+from PIL import Image
 from dotenv import load_dotenv
 load_dotenv()
+
+def normalize_vertical_image(path: Path):
+    img = Image.open(path).convert("RGB")
+    w, h = img.size
+    target_ratio = 9 / 16
+    current_ratio = w / h if h else target_ratio
+
+    if current_ratio > target_ratio:
+        new_w = int(h * target_ratio)
+        left = max(0, (w - new_w) // 2)
+        img = img.crop((left, 0, left + new_w, h))
+    elif current_ratio < target_ratio:
+        new_h = int(w / target_ratio)
+        top = max(0, (h - new_h) // 2)
+        img = img.crop((0, top, w, top + new_h))
+
+    img = img.resize((1080, 1920), Image.LANCZOS)
+    img.save(path, quality=95)
+
 
 def generate_image(prompt, output_name="gemini_output", model="gemini-2.0-flash-exp"):
     key = os.environ["GOOGLE_API_KEY"]
@@ -38,6 +58,7 @@ def generate_image(prompt, output_name="gemini_output", model="gemini-2.0-flash-
             out = Path(f"output/car_videos/{output_name}.{ext}")
             out.parent.mkdir(parents=True, exist_ok=True)
             out.write_bytes(img_bytes)
+            normalize_vertical_image(out)
             print(f"Saved: {out} ({len(img_bytes)/1024:.0f} KB)")
             return str(out)
         elif "text" in part:

@@ -22,12 +22,14 @@ app = typer.Typer(
 
 # Subcommand groups
 shorts_app = typer.Typer(help="Video shorts creation commands")
+preview_app = typer.Typer(help="Approved preview rendering commands")
 projects_app = typer.Typer(help="Project management commands")
 accounts_app = typer.Typer(help="Platform account management commands")
 ingest_app = typer.Typer(help="Analytics and comments ingestion commands")
 learning_app = typer.Typer(help="Learning loop commands")
 story_app = typer.Typer(help="Story generation commands")
 app.add_typer(shorts_app, name="shorts")
+app.add_typer(preview_app, name="preview")
 app.add_typer(projects_app, name="projects")
 app.add_typer(accounts_app, name="accounts")
 app.add_typer(ingest_app, name="ingest")
@@ -223,6 +225,105 @@ def worker() -> None:
         [sys.executable, "-m", "celery", "-A", "shorts_engine.worker", "worker", "--loglevel=info"],
         check=True,
     )
+
+
+@preview_app.command("render-approved")
+def preview_render_approved(
+    brand: str = typer.Option(..., "--brand", help="Approved brand: car or moatifi"),
+    scene_images: list[str] = typer.Option(
+        ...,
+        "--scene-image",
+        help="Repeat exactly twice in scene order",
+    ),
+    scene_lines: list[str] = typer.Option(
+        ...,
+        "--scene-line",
+        help="Repeat exactly twice in scene order",
+    ),
+    name: str | None = typer.Option(None, "--name", help="Output filename prefix"),
+    voice: str | None = typer.Option(None, "--voice", help="Edge TTS voice ID override"),
+    music_url: str | None = typer.Option(
+        None,
+        "--music",
+        help="Optional background music path or URL",
+    ),
+    music_volume: float | None = typer.Option(
+        None,
+        "--music-volume",
+        min=0.0,
+        max=1.0,
+        help="Optional background music volume override",
+    ),
+    validate_only: bool = typer.Option(
+        False,
+        "--validate-only",
+        help="Validate inputs and print the resolved render plan without rendering",
+    ),
+) -> None:
+    """Render a single approved two-scene preview to a vertical MP4."""
+    from shorts_engine.services.approved_preview_renderer import (
+        build_default_output_name,
+        render_approved_preview,
+        validate_approved_preview_inputs,
+    )
+
+    try:
+        scenes = validate_approved_preview_inputs(brand, scene_images, scene_lines)
+    except ValueError as e:
+        console.print(f"[bold red]Input error: {e}[/bold red]")
+        raise typer.Exit(code=1)
+
+    output_name = name or build_default_output_name(brand)
+
+    if validate_only:
+        table = Table(title="Approved Preview Render Plan")
+        table.add_column("Field", style="cyan")
+        table.add_column("Value")
+        table.add_row("Brand", brand)
+        table.add_row("Output", output_name)
+        table.add_row("Scene 1 Image", str(scenes[0].image_path))
+        table.add_row("Scene 1 Line", scenes[0].line)
+        table.add_row("Scene 2 Image", str(scenes[1].image_path))
+        table.add_row("Scene 2 Line", scenes[1].line)
+        table.add_row("Voice", voice or "brand default")
+        table.add_row("Music", music_url or "none/settings default")
+        console.print(table)
+        return
+
+    console.print(
+        Panel.fit(
+            f"[bold]Approved Preview Render[/bold]\n\n"
+            f"[cyan]Brand:[/cyan] {brand}\n"
+            f"[cyan]Output:[/cyan] {output_name}\n"
+            f"[cyan]Scenes:[/cyan] 2",
+            border_style="blue",
+        )
+    )
+
+    try:
+        result = render_approved_preview(
+            brand=brand,
+            output_name=output_name,
+            scenes=scenes,
+            voice_id=voice,
+            background_music_url=music_url,
+            background_music_volume=music_volume,
+        )
+    except Exception as e:
+        console.print(f"[bold red]Render failed: {e}[/bold red]")
+        raise typer.Exit(code=1)
+
+    table = Table(title="Approved Preview Render Complete")
+    table.add_column("Field", style="cyan")
+    table.add_column("Value")
+    table.add_row("Video", str(result.final_video_path))
+    table.add_row("Voiceover", str(result.voiceover_path))
+    table.add_row("Duration", f"{result.total_duration_seconds:.1f}s")
+    table.add_row(
+        "Scene Durations",
+        ", ".join(f"{item:.1f}s" for item in result.scene_durations),
+    )
+    console.print(table)
 
 
 # =============================================================================

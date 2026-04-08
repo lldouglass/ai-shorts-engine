@@ -762,43 +762,40 @@ class MoviePyRenderer(RendererProvider):
         orig_w, orig_h = img_clip.size
 
         # Calculate the zoom and pan at each time point
-        def make_frame(get_frame: Any) -> Any:
-            def new_frame(t: float) -> Any:
-                # Interpolate zoom
-                progress = t / duration
-                zoom = zoom_start + (zoom_end - zoom_start) * progress
+        def make_frame(get_frame: Any, t: float) -> Any:
+            # Interpolate zoom
+            progress = 0.0 if duration <= 0 else min(max(t / duration, 0.0), 1.0)
+            zoom = zoom_start + (zoom_end - zoom_start) * progress
 
-                # Interpolate pan
-                pan_x = pan_x_start + (pan_x_end - pan_x_start) * progress
-                pan_y = pan_y_start + (pan_y_end - pan_y_start) * progress
+            # Interpolate pan
+            pan_x = pan_x_start + (pan_x_end - pan_x_start) * progress
+            pan_y = pan_y_start + (pan_y_end - pan_y_start) * progress
 
-                # Calculate crop region
-                crop_w = int(orig_w / zoom)
-                crop_h = int(orig_h / zoom)
+            # Calculate crop region
+            crop_w = int(orig_w / zoom)
+            crop_h = int(orig_h / zoom)
 
-                # Center with pan offset
-                center_x = orig_w / 2 + pan_x * orig_w
-                center_y = orig_h / 2 + pan_y * orig_h
+            # Center with pan offset
+            center_x = orig_w / 2 + pan_x * orig_w
+            center_y = orig_h / 2 + pan_y * orig_h
 
-                # Crop coordinates
-                x1 = int(max(0, center_x - crop_w / 2))
-                y1 = int(max(0, center_y - crop_h / 2))
-                x2 = int(min(orig_w, x1 + crop_w))
-                y2 = int(min(orig_h, y1 + crop_h))
+            # Crop coordinates
+            x1 = int(max(0, center_x - crop_w / 2))
+            y1 = int(max(0, center_y - crop_h / 2))
+            x2 = int(min(orig_w, x1 + crop_w))
+            y2 = int(min(orig_h, y1 + crop_h))
 
-                # Get frame and crop
-                frame = get_frame(t)
-                cropped = frame[y1:y2, x1:x2]
+            # Get frame and crop
+            frame = get_frame(t)
+            cropped = frame[y1:y2, x1:x2]
 
-                # Resize to output dimensions
-                import numpy as np
-                from PIL import Image
+            # Resize to output dimensions
+            import numpy as np
+            from PIL import Image
 
-                pil_img = Image.fromarray(cropped)
-                pil_img = pil_img.resize((width, height), Image.Resampling.LANCZOS)
-                return np.array(pil_img)
-
-            return new_frame
+            pil_img = Image.fromarray(cropped)
+            pil_img = pil_img.resize((width, height), Image.Resampling.LANCZOS)
+            return np.array(pil_img)
 
         # Apply the Ken Burns transformation using transform
         return img_clip.transform(make_frame)

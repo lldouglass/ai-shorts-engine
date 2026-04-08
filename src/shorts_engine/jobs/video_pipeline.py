@@ -25,6 +25,7 @@ from shorts_engine.adapters.video_gen.base import VideoGenProvider, VideoGenRequ
 from shorts_engine.adapters.video_gen.luma import LumaProvider
 from shorts_engine.adapters.video_gen.stub import StubVideoGenProvider
 from shorts_engine.config import settings
+from shorts_engine.bridge.export_project_manifest import export_project_manifest
 from shorts_engine.db.models import AssetModel, PromptModel, SceneModel, StoryModel, VideoJobModel
 from shorts_engine.db.session import get_session_context
 from shorts_engine.domain.enums import QACheckType, QAStage, QAStatus
@@ -75,6 +76,34 @@ def get_video_gen_provider() -> VideoGenProvider:
         return SeedanceProvider()
     else:
         return StubVideoGenProvider()
+
+
+def _export_ready_manifest(session: Any, job: VideoJobModel, video_job_id: str) -> None:
+    """Export the manifest and persist bridge metadata for a ready job."""
+    try:
+        manifest_export = export_project_manifest(session, job.id)
+        job.metadata_ = job.metadata_ or {}
+        job.metadata_["manifest_bridge"] = {
+            "status": "exported",
+            "manifest_path": manifest_export.manifest_path,
+            "job_artifact_path": manifest_export.job_artifact_path,
+            "bundle_root": manifest_export.bundle_root,
+            "summary": manifest_export.summary,
+        }
+        session.commit()
+    except Exception as exc:
+        job.metadata_ = job.metadata_ or {}
+        job.metadata_["manifest_bridge"] = {
+            "status": "failed",
+            "error": str(exc),
+            "failed_at": datetime.now(UTC).isoformat(),
+        }
+        session.commit()
+        logger.exception(
+            "mark_ready_manifest_export_failed",
+            video_job_id=video_job_id,
+        )
+        raise RuntimeError(f"Manifest export failed for ready job {video_job_id}: {exc}") from exc
 
 
 # =============================================================================
@@ -1015,6 +1044,7 @@ def mark_ready_for_render_task(
         job.stage = "ready"
         job.completed_at = datetime.now(UTC)
         session.commit()
+        _export_ready_manifest(session, job, video_job_id)
 
         # Collect final asset URLs
         assets = (
@@ -1052,6 +1082,9 @@ def mark_ready_for_render_task(
             "description": job.description,
             "assets": asset_urls,
             "completed_at": job.completed_at.isoformat() if job.completed_at else None,
+            "manifest_path": job.metadata_.get("manifest_bridge", {}).get("manifest_path")
+            if job.metadata_
+            else None,
         }
 
 
