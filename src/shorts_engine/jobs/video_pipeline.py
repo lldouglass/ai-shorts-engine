@@ -13,6 +13,7 @@ All tasks support:
 """
 
 import hashlib
+from collections.abc import Mapping
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -21,6 +22,7 @@ from uuid import UUID, uuid4
 from celery import chain
 from sqlalchemy import select
 
+import shorts_engine.shot_plans as shot_plans
 from shorts_engine.adapters.video_gen.base import VideoGenProvider, VideoGenRequest
 from shorts_engine.adapters.video_gen.luma import LumaProvider
 from shorts_engine.adapters.video_gen.stub import StubVideoGenProvider
@@ -40,13 +42,203 @@ from shorts_engine.services.metrics import (
     record_job_started,
     record_qa_check,
 )
-from shorts_engine.services.planner import PlannerService
+from shorts_engine.services.planner import PlannerService, ScenePlan, VideoPlan
 from shorts_engine.services.qa import QAFailedException, QAService
 from shorts_engine.services.storage import StorageService
 from shorts_engine.utils import run_async
 from shorts_engine.worker import celery_app
 
 logger = get_logger(__name__)
+
+SHOT_PLAN_STYLE_PREFIX = "shot_plan:"
+SHOT_PLAN_PROMPT_MODEL = "deterministic_shot_plan_compiler"
+
+
+def resolve_shot_plan_preset(style_preset: str) -> tuple[str, str] | None:
+    """Resolve a style preset string to a deterministic shot-plan preset.
+
+    Supported selectors:
+    - ``shot_plan:<preset_id>``
+    - ``shot_plan:<preset_id>@<version>``
+    - the raw flagship preset id for compact internal calls
+    """
+    selector = style_preset.strip()
+    if not selector:
+        return None
+
+    explicit_selector = selector.lower().startswith(SHOT_PLAN_STYLE_PREFIX)
+    if explicit_selector:
+        selector = selector[len(SHOT_PLAN_STYLE_PREFIX) :]
+
+    preset_id, preset_version = _split_shot_plan_selector(selector)
+    preset_id = preset_id.lower()
+    preset = shot_plans.get_shot_plan_preset(preset_id, preset_version)
+
+    if preset is None:
+        if explicit_selector:
+            version_suffix = f"@{preset_version}" if preset_version else ""
+            raise ValueError(f"Unknown shot-plan preset: {preset_id}{version_suffix}")
+        return None
+
+    return preset.preset_id, preset.version
+
+
+def build_video_plan_from_shot_plan(
+    idea: str,
+    style_preset: str,
+    *,
+    product: shot_plans.ProductConceptInput | Mapping[str, Any] | None = None,
+    brand: shot_plans.BrandRuntimeInput | Mapping[str, Any] | None = None,
+) -> VideoPlan | None:
+    """Compile a deterministic shot plan into the existing video planning contract."""
+    resolved = resolve_shot_plan_preset(style_preset)
+    if resolved is None:
+        return None
+
+    preset_id, preset_version = resolved
+    product_input = product or {"concept": idea, "key_benefit": idea}
+    compiled = PlannerService.compile_shot_plan(
+        product=product_input,
+        brand=brand,
+        preset_id=preset_id,
+        preset_version=preset_version,
+    )
+    return _compiled_shot_plan_to_video_plan(compiled, style_preset)
+
+
+def _split_shot_plan_selector(selector: str) -> tuple[str, str | None]:
+    if "@" not in selector:
+        return selector.strip(), None
+
+    preset_id, preset_version = selector.rsplit("@", 1)
+    return preset_id.strip(), preset_version.strip() or None
+
+
+def _compiled_shot_plan_to_video_plan(
+    compiled: shot_plans.CompiledShotPlan,
+    style_preset: str,
+) -> VideoPlan:
+    scenes = [
+        ScenePlan(
+            scene_number=shot.sequence_order,
+            visual_prompt=_shot_visual_prompt(shot),
+            continuity_notes=_shot_continuity_notes(shot),
+            caption_beat=shot.role.replace("_", " ").title(),
+            duration_seconds=shot.duration_target_seconds,
+            metadata=_shot_scene_metadata(compiled, shot),
+        )
+        for shot in compiled.shots
+    ]
+
+    return VideoPlan(
+        title=_shot_plan_title(compiled),
+        description=(
+            f"Deterministic {compiled.preset.preset_id}@{compiled.preset.version} "
+            f"shot plan for {compiled.product.product_name}."
+        ),
+        scenes=scenes,
+        style_preset=style_preset,
+        raw_response=compiled.model_dump(mode="json"),
+    )
+
+
+def _shot_visual_prompt(shot: shot_plans.ShotSpec) -> str:
+    parts = [
+        shot.camera_language,
+        shot.subject,
+        shot.environment,
+        shot.motion_beat,
+    ]
+    if shot.take_generation_defaults.avoid_visible_text:
+        parts.append(
+            "Avoid readable text, letters, numbers, labels, UI, captions, and subtitles"
+        )
+    return ". ".join(_clean_sentence(part) for part in parts if part)
+
+
+def _shot_continuity_notes(shot: shot_plans.ShotSpec) -> str:
+    parts = [
+        f"Intent: {shot.intent}",
+        f"Shot role: {shot.role}",
+    ]
+    if shot.take_generation_defaults.notes:
+        parts.append("Generation notes: " + " ".join(shot.take_generation_defaults.notes))
+    if shot.variation_hints:
+        parts.append("Variation hints: " + " ".join(shot.variation_hints))
+    return ". ".join(_clean_sentence(part) for part in parts if part)
+
+
+def _shot_scene_metadata(
+    compiled: shot_plans.CompiledShotPlan,
+    shot: shot_plans.ShotSpec,
+) -> dict[str, Any]:
+    return {
+        "shot_plan": {
+            "plan_id": compiled.plan_id,
+            "preset_id": compiled.preset.preset_id,
+            "preset_version": compiled.preset.version,
+            "shot_id": shot.shot_id,
+            "role": shot.role,
+            "shot": shot.model_dump(mode="json"),
+            "take_request": shot.take_request.model_dump(mode="json"),
+        }
+    }
+
+
+def _shot_plan_title(compiled: shot_plans.CompiledShotPlan) -> str:
+    title = compiled.product.concept or f"{compiled.product.product_name} shot plan"
+    return title if len(title) <= 255 else f"{title[:252]}..."
+
+
+def _clean_sentence(value: str) -> str:
+    return value.strip().rstrip(".")
+
+
+def _build_shot_plan_video_plan_for_job(job: VideoJobModel) -> VideoPlan | None:
+    product = _build_shot_plan_product_input(job.idea, job.metadata_)
+    brand = _build_shot_plan_brand_input(job)
+    return build_video_plan_from_shot_plan(
+        job.idea,
+        job.style_preset,
+        product=product,
+        brand=brand,
+    )
+
+
+def _build_shot_plan_product_input(
+    idea: str,
+    metadata: Mapping[str, Any] | None,
+) -> dict[str, Any]:
+    config = _shot_plan_config(metadata)
+    product_value = config.get("product")
+    product = dict(product_value) if isinstance(product_value, Mapping) else {}
+
+    product.setdefault("product_name", idea)
+    product.setdefault("concept", idea)
+    product.setdefault("key_benefit", idea)
+
+    visual_constraints = product.get("visual_constraints")
+    if isinstance(visual_constraints, str):
+        product["visual_constraints"] = [visual_constraints]
+    elif visual_constraints is None:
+        product["visual_constraints"] = []
+
+    return product
+
+
+def _build_shot_plan_brand_input(job: VideoJobModel) -> dict[str, Any]:
+    metadata = job.metadata_ if isinstance(job.metadata_, Mapping) else None
+    config = _shot_plan_config(metadata)
+    brand_value = config.get("brand")
+    return dict(brand_value) if isinstance(brand_value, Mapping) else {}
+
+
+def _shot_plan_config(metadata: Mapping[str, Any] | None) -> Mapping[str, Any]:
+    if not isinstance(metadata, Mapping):
+        return {}
+
+    config = metadata.get("shot_plan")
+    return config if isinstance(config, Mapping) else {}
 
 
 def generate_idempotency_key(project_id: str, idea: str, preset: str) -> str:
@@ -190,17 +382,22 @@ def plan_job_task(
                     target_duration=target_duration_seconds,
                 )
 
-            # Run planner
-            planner = PlannerService()
-            plan = run_async(
-                planner.plan(
-                    job.idea,
-                    job.style_preset,
-                    optimization_context,
-                    story_context,
-                    target_duration_seconds,
+            # Run planner. Shot-plan presets compile deterministically into the
+            # same VideoPlan contract consumed by the generation stage.
+            plan = _build_shot_plan_video_plan_for_job(job)
+            prompt_model = SHOT_PLAN_PROMPT_MODEL
+            if plan is None:
+                planner = PlannerService()
+                plan = run_async(
+                    planner.plan(
+                        job.idea,
+                        job.style_preset,
+                        optimization_context,
+                        story_context,
+                        target_duration_seconds,
+                    )
                 )
-            )
+                prompt_model = planner.llm.name
 
             # Update job with plan
             job.title = plan.title
@@ -227,6 +424,7 @@ def plan_job_task(
                     caption_beat=scene_plan.caption_beat,
                     duration_seconds=scene_plan.duration_seconds,
                     status="pending",
+                    metadata_=scene_plan.metadata,
                 )
                 session.add(scene)
                 scene_ids.append(str(scene.id))
@@ -237,8 +435,9 @@ def plan_job_task(
                     scene_id=scene.id,
                     prompt_type="visual",
                     prompt_text=scene_plan.visual_prompt,
-                    model=planner.llm.name,
+                    model=prompt_model,
                     is_final=True,
+                    metadata_=scene_plan.metadata,
                 )
                 session.add(prompt)
 
@@ -1092,11 +1291,14 @@ def run_full_pipeline_task(
     if not idempotency_key:
         idempotency_key = generate_idempotency_key(project_id, idea, style_preset)
 
+    uses_shot_plan = resolve_shot_plan_preset(style_preset) is not None
+
     logger.info(
         "full_pipeline_started",
         task_id=task_id,
         project_id=project_id,
         idempotency_key=idempotency_key,
+        uses_shot_plan=uses_shot_plan,
     )
 
     with get_session_context() as session:
@@ -1126,47 +1328,54 @@ def run_full_pipeline_task(
             session.add(job)
             session.flush()  # Get the job ID before story generation
 
-            # Generate a story from the idea so the render pipeline has
-            # a proper narration script instead of falling back to caption beats.
-            try:
-                from shorts_engine.services.story_generator import StoryGenerator
-
-                generator = StoryGenerator()
-                story = run_async(generator.generate(idea))
-
-                story_model = StoryModel(
-                    id=uuid4(),
-                    project_id=project_uuid,
-                    topic=idea,
-                    title=story.title,
-                    narrative_text=story.narrative_text,
-                    narrative_style=story.narrative_style,
-                    suggested_preset=story.suggested_preset,
-                    word_count=story.word_count,
-                    estimated_duration_seconds=story.estimated_duration_seconds,
-                    status="approved",
-                )
-                session.add(story_model)
-                session.flush()
-
-                job.story_id = story_model.id
-                job.idea = story.narrative_text  # Full narrative replaces short idea
-                if not style_preset:
-                    job.style_preset = story.suggested_preset
-
+            if uses_shot_plan:
                 logger.info(
-                    "full_pipeline_story_generated",
+                    "full_pipeline_story_skipped_for_shot_plan",
                     video_job_id=str(job.id),
-                    story_id=str(story_model.id),
-                    word_count=story.word_count,
+                    style_preset=style_preset,
                 )
-            except Exception:
-                logger.warning(
-                    "full_pipeline_story_generation_failed",
-                    video_job_id=str(job.id),
-                    exc_info=True,
-                )
-                # Continue without a story — pipeline falls back to caption beats
+            else:
+                # Generate a story from the idea so the render pipeline has
+                # a proper narration script instead of falling back to caption beats.
+                try:
+                    from shorts_engine.services.story_generator import StoryGenerator
+
+                    generator = StoryGenerator()
+                    story = run_async(generator.generate(idea))
+
+                    story_model = StoryModel(
+                        id=uuid4(),
+                        project_id=project_uuid,
+                        topic=idea,
+                        title=story.title,
+                        narrative_text=story.narrative_text,
+                        narrative_style=story.narrative_style,
+                        suggested_preset=story.suggested_preset,
+                        word_count=story.word_count,
+                        estimated_duration_seconds=story.estimated_duration_seconds,
+                        status="approved",
+                    )
+                    session.add(story_model)
+                    session.flush()
+
+                    job.story_id = story_model.id
+                    job.idea = story.narrative_text  # Full narrative replaces short idea
+                    if not style_preset:
+                        job.style_preset = story.suggested_preset
+
+                    logger.info(
+                        "full_pipeline_story_generated",
+                        video_job_id=str(job.id),
+                        story_id=str(story_model.id),
+                        word_count=story.word_count,
+                    )
+                except Exception:
+                    logger.warning(
+                        "full_pipeline_story_generation_failed",
+                        video_job_id=str(job.id),
+                        exc_info=True,
+                    )
+                    # Continue without a story; pipeline falls back to caption beats.
 
             session.commit()
             video_job_id = str(job.id)

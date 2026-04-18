@@ -26,6 +26,7 @@ class ScenePlan:
     continuity_notes: str
     caption_beat: str
     duration_seconds: float = 5.0
+    metadata: dict[str, Any] | None = None
 
 
 @dataclass
