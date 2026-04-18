@@ -1,9 +1,11 @@
 """Video planning service using LLM providers."""
 
 import json
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Any
 
+import shorts_engine.shot_plans as shot_plans
 from shorts_engine.adapters.llm.anthropic import AnthropicProvider
 from shorts_engine.adapters.llm.base import LLMMessage, LLMProvider
 from shorts_engine.adapters.llm.openai import OpenAIProvider
@@ -213,6 +215,29 @@ This video is based on a pre-written story. Preserve the narrative arc and emoti
 {duration_section}
 
 Generate a compelling {scene_count}-scene video plan that brings this idea to life in the {preset.display_name} style."""
+
+    @staticmethod
+    def compile_shot_plan(
+        product: shot_plans.ProductConceptInput | Mapping[str, Any] | None = None,
+        *,
+        concept: str | None = None,
+        brand: shot_plans.BrandRuntimeInput | Mapping[str, Any] | None = None,
+        preset_id: str = shot_plans.FLAGSHIP_PRESET_ID,
+        preset_version: str = shot_plans.FLAGSHIP_PRESET_VERSION,
+    ) -> shot_plans.CompiledShotPlan:
+        """Compile a deterministic preset shot plan without calling an LLM provider."""
+        logger.info(
+            "compiling_preset_shot_plan",
+            preset_id=preset_id,
+            preset_version=preset_version,
+        )
+        return shot_plans.compile_shot_plan(
+            preset_id=preset_id,
+            preset_version=preset_version,
+            product=product,
+            concept=concept,
+            brand=brand,
+        )
 
     async def plan(
         self,

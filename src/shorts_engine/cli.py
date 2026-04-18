@@ -1,6 +1,7 @@
 """Command-line interface using Typer."""
 
 from datetime import UTC
+from pathlib import Path
 from uuid import UUID
 
 import typer
@@ -10,6 +11,7 @@ from rich.table import Table
 
 from shorts_engine import __version__
 from shorts_engine.logging import setup_logging
+from shorts_engine.shot_plans import FLAGSHIP_PRESET_ID, FLAGSHIP_PRESET_VERSION
 
 # Setup logging
 setup_logging()
@@ -342,6 +344,121 @@ def shorts_create(
     except Exception as e:
         console.print(f"[bold red]Error: {e}[/bold red]")
         raise typer.Exit(code=1)
+
+
+@shorts_app.command("compile-shot-plan")
+def shorts_compile_shot_plan(
+    product_name: str = typer.Option(
+        ...,
+        "--product-name",
+        help="Product or subject name for the shot plan",
+    ),
+    key_benefit: str = typer.Option(
+        ...,
+        "--key-benefit",
+        help="Primary benefit or payoff the shots should communicate",
+    ),
+    concept: str | None = typer.Option(None, "--concept", help="Optional concept summary"),
+    product_category: str | None = typer.Option(
+        None,
+        "--product-category",
+        help="Optional product category",
+    ),
+    audience: str | None = typer.Option(None, "--audience", help="Optional target audience"),
+    primary_sensory_cue: str | None = typer.Option(
+        None,
+        "--primary-sensory-cue",
+        help="Optional sensory cue for macro/detail shots",
+    ),
+    supporting_detail: str | None = typer.Option(
+        None,
+        "--supporting-detail",
+        help="Optional detail to anchor the final packshot",
+    ),
+    use_case: str | None = typer.Option(None, "--use-case", help="Optional product use case"),
+    visual_constraint: list[str] | None = typer.Option(
+        None,
+        "--visual-constraint",
+        help="Visual constraint to carry into the product input; repeatable",
+    ),
+    brand_name: str | None = typer.Option(None, "--brand-name", help="Optional brand name"),
+    brand_voice: str | None = typer.Option(None, "--brand-voice", help="Optional brand voice"),
+    visual_style: str | None = typer.Option(
+        None,
+        "--visual-style",
+        help="Optional visual style guidance",
+    ),
+    environment: str | None = typer.Option(
+        None,
+        "--environment",
+        help="Optional scene environment",
+    ),
+    runtime: float | None = typer.Option(
+        None,
+        "--runtime",
+        help="Optional runtime target in seconds",
+    ),
+    preset_id: str = typer.Option(
+        FLAGSHIP_PRESET_ID,
+        "--preset-id",
+        help="Shot-plan preset id",
+    ),
+    preset_version: str = typer.Option(
+        FLAGSHIP_PRESET_VERSION,
+        "--preset-version",
+        help="Shot-plan preset version",
+    ),
+    output: Path | None = typer.Option(
+        None,
+        "--output",
+        "-o",
+        help="Write JSON to this file instead of stdout",
+    ),
+) -> None:
+    """Compile a deterministic preset shot plan as JSON."""
+    from shorts_engine.services.planner import PlannerService
+
+    product = {
+        "product_name": product_name,
+        "product_category": product_category,
+        "concept": concept,
+        "key_benefit": key_benefit,
+        "audience": audience,
+        "primary_sensory_cue": primary_sensory_cue,
+        "supporting_detail": supporting_detail,
+        "use_case": use_case,
+        "visual_constraints": visual_constraint or [],
+    }
+    brand = {
+        "brand_name": brand_name,
+        "brand_voice": brand_voice,
+        "visual_style": visual_style,
+        "environment": environment,
+        "runtime_target_seconds": runtime,
+    }
+
+    try:
+        plan = PlannerService.compile_shot_plan(
+            product=product,
+            brand=brand,
+            preset_id=preset_id,
+            preset_version=preset_version,
+        )
+    except ValueError as e:
+        console.print(f"[bold red]Error: {e}[/bold red]")
+        raise typer.Exit(code=1)
+
+    payload = plan.model_dump_json(indent=2) + "\n"
+    if output:
+        try:
+            output.write_text(payload, encoding="utf-8")
+        except OSError as e:
+            console.print(f"[bold red]Error writing {output}: {e}[/bold red]")
+            raise typer.Exit(code=1)
+        console.print(f"[green]Wrote shot plan JSON:[/green] {output}")
+        return
+
+    typer.echo(payload, nl=False)
 
 
 def _show_job_details(job_id: str) -> None:
