@@ -8,6 +8,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 SHOT_PLAN_SCHEMA_VERSION = "shot-plan.v1"
+FIRST_FRAME_REVIEW_SCHEMA_VERSION = "first-frame-review.v1"
 
 
 class ShotStatus(StrEnum):
@@ -27,6 +28,13 @@ class TakeRequestStatus(StrEnum):
     BLOCKED_ON_REFERENCES = "blocked_on_references"
     READY = "ready"
     GENERATED = "generated"
+
+
+class FirstFrameReviewStatus(StrEnum):
+    """Lifecycle status for the first-frame review handoff."""
+
+    AWAITING_REVIEW = "awaiting_review"
+    APPROVED = "approved"
 
 
 class ContractModel(BaseModel):
@@ -166,6 +174,67 @@ class ShotTakeRequest(ContractModel):
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 
+class FirstFrameReferenceAsset(ContractModel):
+    """Concrete source asset to preserve while generating first-frame stills."""
+
+    asset_id: str = Field(min_length=1)
+    role: str = Field(min_length=1)
+    uri: str = Field(min_length=1)
+    description: str = Field(min_length=1)
+    required: bool = True
+
+
+class FirstFrameApprovalGate(ContractModel):
+    """Provider-neutral rule that keeps motion/takes behind still approval."""
+
+    blocked_stage: Literal["take_generation"] = "take_generation"
+    requires_approved_first_frame: bool = True
+    take_generation_blocked: bool = True
+    motion_generation_blocked: bool = True
+    reason: str = Field(
+        default=(
+            "Take generation is blocked until an approved first-frame/reference "
+            "is selected for this shot."
+        ),
+        min_length=1,
+    )
+
+
+class FirstFramePromptInputs(ContractModel):
+    """Structured prompt inputs for reviewing one first-frame still direction."""
+
+    aspect_ratio: str = Field(default="9:16", min_length=1)
+    product_name: str = Field(min_length=1)
+    brand_name: str | None = None
+    shot_id: str = Field(min_length=1)
+    sequence_order: int = Field(ge=1)
+    role: str = Field(min_length=1)
+    intent: str = Field(min_length=1)
+    subject: str = Field(min_length=1)
+    environment: str = Field(min_length=1)
+    camera_language: str = Field(min_length=1)
+    motion_beat_after_approval: str = Field(min_length=1)
+    visual_constraints: list[str] = Field(default_factory=list)
+    reference_asset_ids: list[str] = Field(default_factory=list)
+
+
+class FirstFrameReviewShot(ContractModel):
+    """Per-shot first-frame review request emitted before take generation."""
+
+    shot_id: str = Field(min_length=1)
+    sequence_order: int = Field(ge=1)
+    role: str = Field(min_length=1)
+    intent: str = Field(min_length=1)
+    duration_target_seconds: float = Field(gt=0)
+    reference_requirements: list[ReferenceRequirement] = Field(min_length=1)
+    reference_asset_ids: list[str] = Field(default_factory=list)
+    first_frame_prompt_id: str = Field(min_length=1)
+    prompt_inputs: FirstFramePromptInputs
+    review_prompt_text: str = Field(min_length=1)
+    approval_gate: FirstFrameApprovalGate = Field(default_factory=FirstFrameApprovalGate)
+    status: FirstFrameReviewStatus = FirstFrameReviewStatus.AWAITING_REVIEW
+
+
 class ShotSpec(ContractModel):
     """Compiled shot spec ready for references, takes, and review."""
 
@@ -215,6 +284,49 @@ class CompiledShotPlan(ContractModel):
     def shot_count(self) -> int:
         """Number of shots in this plan."""
         return len(self.shots)
+
+
+class FirstFrameReviewPayload(ContractModel):
+    """Deterministic AI-side shot package for first-frame still review."""
+
+    payload_id: str = Field(min_length=1)
+    schema_version: str = Field(default=FIRST_FRAME_REVIEW_SCHEMA_VERSION)
+    source_plan_id: str = Field(min_length=1)
+    preset: PresetVersion
+    product: ProductConceptInput
+    brand: BrandRuntimeInput | None = None
+    runtime_target_seconds: float = Field(gt=0)
+    compiler_version: str = Field(default="first-frame-review-builder.v1", min_length=1)
+    aspect_ratio: str = Field(default="9:16", min_length=1)
+    reference_assets: list[FirstFrameReferenceAsset] = Field(default_factory=list)
+    review_guidance: list[str] = Field(default_factory=list)
+    approval_gate: FirstFrameApprovalGate = Field(default_factory=FirstFrameApprovalGate)
+    shots: list[FirstFrameReviewShot] = Field(min_length=1)
+    status: FirstFrameReviewStatus = FirstFrameReviewStatus.AWAITING_REVIEW
+
+    @model_validator(mode="after")
+    def validate_review_payload(self) -> FirstFrameReviewPayload:
+        """Require stable shot and reference-asset identity in the review payload."""
+        shot_ids = [shot.shot_id for shot in self.shots]
+        if len(shot_ids) != len(set(shot_ids)):
+            raise ValueError("First-frame review shot ids must be unique")
+
+        sequence_orders = [shot.sequence_order for shot in self.shots]
+        if sorted(sequence_orders) != list(range(1, len(sequence_orders) + 1)):
+            raise ValueError("First-frame review shot sequence orders must be contiguous from 1")
+
+        asset_ids = [asset.asset_id for asset in self.reference_assets]
+        if len(asset_ids) != len(set(asset_ids)):
+            raise ValueError("First-frame reference asset ids must be unique")
+
+        known_asset_ids = set(asset_ids)
+        for shot in self.shots:
+            unknown_asset_ids = set(shot.reference_asset_ids) - known_asset_ids
+            if unknown_asset_ids:
+                unknown = ", ".join(sorted(unknown_asset_ids))
+                raise ValueError(f"Unknown reference asset ids for {shot.shot_id}: {unknown}")
+
+        return self
 
 
 ShotPlan = CompiledShotPlan

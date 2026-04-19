@@ -461,6 +461,31 @@ def shorts_compile_shot_plan(
     typer.echo(payload, nl=False)
 
 
+@shorts_app.command("tall-owl-first-frame-review")
+def shorts_tall_owl_first_frame_review(
+    output: Path | None = typer.Option(
+        None,
+        "--output",
+        "-o",
+        help="Write JSON to this file instead of stdout",
+    ),
+) -> None:
+    """Emit the Tall Owl benchmark first-frame review payload as JSON."""
+    from shorts_engine.shot_plans.benchmarks import build_tall_owl_first_frame_review_payload
+
+    payload = build_tall_owl_first_frame_review_payload().model_dump_json(indent=2) + "\n"
+    if output:
+        try:
+            output.write_text(payload, encoding="utf-8")
+        except OSError as e:
+            console.print(f"[bold red]Error writing {output}: {e}[/bold red]")
+            raise typer.Exit(code=1)
+        console.print(f"[green]Wrote Tall Owl first-frame review JSON:[/green] {output}")
+        return
+
+    typer.echo(payload, nl=False)
+
+
 def _show_job_details(job_id: str) -> None:
     """Display detailed job information."""
     from sqlalchemy import select

@@ -1,9 +1,24 @@
 """Preset-driven shot plan contracts and compiler."""
 
+from shorts_engine.shot_plans.benchmarks import (
+    TALL_OWL_BENCHMARK_ID,
+    TALL_OWL_BRAND_INPUT,
+    TALL_OWL_FIRST_FRAME_REVIEW_GUIDANCE,
+    TALL_OWL_PRODUCT_INPUT,
+    TALL_OWL_REFERENCE_ASSETS,
+    build_tall_owl_first_frame_review_payload,
+    compile_tall_owl_benchmark_shot_plan,
+)
 from shorts_engine.shot_plans.compiler import compile_shot_plan
 from shorts_engine.shot_plans.contracts import (
     BrandRuntimeInput,
     CompiledShotPlan,
+    FirstFrameApprovalGate,
+    FirstFramePromptInputs,
+    FirstFrameReferenceAsset,
+    FirstFrameReviewPayload,
+    FirstFrameReviewShot,
+    FirstFrameReviewStatus,
     PresetShotTemplate,
     PresetSpec,
     PresetVersion,
@@ -23,6 +38,10 @@ from shorts_engine.shot_plans.presets import (
     get_shot_plan_preset,
     list_shot_plan_presets,
 )
+from shorts_engine.shot_plans.review_payload import (
+    DEFAULT_FIRST_FRAME_REVIEW_GUIDANCE,
+    build_first_frame_review_payload,
+)
 
 __all__ = [
     "FLAGSHIP_PRESET_ID",
@@ -30,6 +49,13 @@ __all__ = [
     "PREMIUM_PRODUCT_MACRO_REVEAL_PACKSHOT",
     "BrandRuntimeInput",
     "CompiledShotPlan",
+    "DEFAULT_FIRST_FRAME_REVIEW_GUIDANCE",
+    "FirstFrameApprovalGate",
+    "FirstFramePromptInputs",
+    "FirstFrameReferenceAsset",
+    "FirstFrameReviewPayload",
+    "FirstFrameReviewShot",
+    "FirstFrameReviewStatus",
     "PresetShotTemplate",
     "PresetSpec",
     "PresetVersion",
@@ -41,7 +67,15 @@ __all__ = [
     "ShotTakeRequest",
     "TakeGenerationDefaults",
     "TakeRequestStatus",
+    "TALL_OWL_BENCHMARK_ID",
+    "TALL_OWL_BRAND_INPUT",
+    "TALL_OWL_FIRST_FRAME_REVIEW_GUIDANCE",
+    "TALL_OWL_PRODUCT_INPUT",
+    "TALL_OWL_REFERENCE_ASSETS",
+    "build_first_frame_review_payload",
+    "build_tall_owl_first_frame_review_payload",
     "compile_shot_plan",
+    "compile_tall_owl_benchmark_shot_plan",
     "get_shot_plan_preset",
     "list_shot_plan_presets",
 ]
