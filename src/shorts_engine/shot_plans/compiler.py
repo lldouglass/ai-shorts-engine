@@ -40,6 +40,7 @@ def compile_shot_plan(
     product_input = _coerce_product(product, concept)
     brand_input = _coerce_brand(brand)
     runtime_target_seconds = brand_input.runtime_target_seconds or preset.runtime_target_seconds
+    plan_id = _plan_id(preset_id, preset_version, product_input, brand_input)
     context = _build_template_context(product_input, brand_input)
     durations = _scaled_durations(
         [template.duration_target_seconds for template in preset.shot_templates],
@@ -90,6 +91,7 @@ def compile_shot_plan(
                 "product_name": product_input.product_name,
                 "concept": product_input.concept,
                 "requires_review": True,
+                "source_plan_id": plan_id,
             },
         )
 
@@ -112,7 +114,7 @@ def compile_shot_plan(
         )
 
     return CompiledShotPlan(
-        plan_id=_plan_id(preset_id, preset_version, product_input, brand_input),
+        plan_id=plan_id,
         preset=preset.identity,
         product=product_input,
         brand=brand_input,

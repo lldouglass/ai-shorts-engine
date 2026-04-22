@@ -155,6 +155,7 @@ def test_take_request_metadata_supports_refs_takes_and_review() -> None:
         assert take_request.generation_defaults.variation_axes
         assert take_request.variation_hints
         assert take_request.metadata["requires_review"] is True
+        assert take_request.metadata["source_plan_id"] == plan.plan_id
 
         for requirement in take_request.reference_requirements:
             assert requirement.approval_required is True
