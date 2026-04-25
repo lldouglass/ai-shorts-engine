@@ -7,6 +7,8 @@ from shorts_engine.shot_plans.contracts import (
     PresetSpec,
     PresetVersion,
     ReferenceRequirement,
+    StoryboardBoardSpec,
+    StoryboardDeckSpec,
     TakeGenerationDefaults,
 )
 
@@ -21,11 +23,40 @@ PREMIUM_PRODUCT_MACRO_REVEAL_PACKSHOT = PresetSpec(
     ),
     display_name="Premium Product Macro Reveal Packshot",
     description=(
-        "A three-shot premium shortform product-ad structure: sensory macro hook, "
-        "reveal/demo, then packshot payoff."
+        "A six-board premium shortform beat deck: macro hook, sensory lock, reveal, "
+        "proof, identity reinforcement, then packshot payoff."
     ),
     aspect_ratio="9:16",
     runtime_target_seconds=8.0,
+    storyboard_deck=StoryboardDeckSpec(
+        visual_world=(
+            "{visual_style}; keep the same premium product world, lighting logic, "
+            "materials, and set dressing across every board in the sequence"
+        ),
+        layout_system=(
+            "Designed beat-deck / motionized-carousel layout: short readable copy in the "
+            "upper safe zone, one hero visual beat per board, clean margins for later motion"
+        ),
+        copy_style="Short sentence-case board copy, one clear beat per board, readable on phone",
+        continuity_locks=[
+            (
+                "Recurring hero subject / product lock across every board: keep the same "
+                "{product_name} as the hero identity."
+            ),
+            (
+                "Recurring supporting prop / companion cue lock across every board: preserve "
+                "{supporting_detail} without swapping to a new prop set."
+            ),
+            (
+                "Recurring key object / material detail lock across every board: preserve "
+                "{primary_sensory_cue} as the same recognizable hero detail."
+            ),
+            (
+                "If a recurring mascot, spokesperson, or character is present in the approved "
+                "board/reference, keep that same character identity across the full sequence."
+            ),
+        ],
+    ),
     shot_templates=[
         PresetShotTemplate(
             template_id="macro_hook",
@@ -61,10 +92,23 @@ PREMIUM_PRODUCT_MACRO_REVEAL_PACKSHOT = PresetSpec(
                     "highlight placement",
                     "macro focal detail",
                 ],
+                preserve_approved_board_text=True,
                 notes=[
                     "Keep the product identity legible even at macro scale.",
-                    "Avoid readable text, labels, or UI overlays.",
+                    (
+                        "Avoid extra readable text outside the approved board copy, plus "
+                        "stray labels or UI overlays."
+                    ),
                 ],
+            ),
+            storyboard_board=StoryboardBoardSpec(
+                title="Hook",
+                hook_role="cover_hook",
+                on_frame_text="{benefit_copy}",
+                layout_notes=(
+                    "Lead with the hook copy high in frame, let the macro texture dominate "
+                    "the board, and keep one tactile focal point with premium negative space."
+                ),
             ),
             variation_hints=[
                 "Try one take with a left-to-right drift.",
@@ -73,19 +117,127 @@ PREMIUM_PRODUCT_MACRO_REVEAL_PACKSHOT = PresetSpec(
             ],
         ),
         PresetShotTemplate(
-            template_id="reveal_demo",
+            template_id="sensory_lock_detail",
             sequence_order=2,
-            intent="Reveal the full product and demonstrate the core benefit.",
-            role="reveal_demo",
+            intent="Lock the recognizable hero material/object detail before the wider reveal.",
+            role="sensory_lock_detail",
+            subject_template=(
+                "Faithful sensory lock detail of {product_name}, clearly preserving "
+                "{primary_sensory_cue}"
+            ),
+            environment_template="{environment}; premium demo setup for {audience}",
+            motion_beat_template=(
+                "Short glide across the locked hero detail while the product identity stays intact"
+            ),
+            camera_language=(
+                "Tight detail insert, faithful product geometry, tactile texture clarity"
+            ),
+            duration_target_seconds=1.0,
+            reference_requirements=[
+                ReferenceRequirement(
+                    role="sensory_lock_reference",
+                    description=(
+                        "Reference showing the hero material/object detail that must stay "
+                        "consistent across the sequence."
+                    ),
+                    count=3,
+                    approval_required=True,
+                )
+            ],
+            take_generation_defaults=TakeGenerationDefaults(
+                target_take_count=3,
+                variation_axes=[
+                    "detail framing",
+                    "macro crop",
+                    "highlight placement",
+                ],
+                preserve_approved_board_text=True,
+                notes=[
+                    "Keep the hero detail faithful to the approved product/object lock.",
+                    "Do not let the texture/detail crop become abstract or unrecognizable.",
+                ],
+            ),
+            storyboard_board=StoryboardBoardSpec(
+                title="Texture",
+                hook_role="sensory_lock",
+                on_frame_text="{sensory_copy}",
+                layout_notes=(
+                    "Keep the copy high and readable, use one locked material/object detail "
+                    "as the hero beat, and leave enough negative space so the board still "
+                    "reads as part of the same designed sequence."
+                ),
+            ),
+            variation_hints=[
+                "Try one take with the texture catching edge light.",
+                "Try one take with a cleaner centered crop.",
+                "Try one take with a diagonal macro composition.",
+            ],
+        ),
+        PresetShotTemplate(
+            template_id="product_reveal",
+            sequence_order=3,
+            intent="Reveal the full hero product while keeping the locked identity intact.",
+            role="product_reveal",
+            subject_template="Full hero reveal of {product_name}, faithful to the locked product form",
+            environment_template="{environment}; premium reveal setup for {audience}",
+            motion_beat_template="The full product settles into clear view, then holds for recognition.",
+            camera_language=(
+                "Medium product reveal, smooth push-in, clean silhouette, clear product read"
+            ),
+            duration_target_seconds=1.1,
+            reference_requirements=[
+                ReferenceRequirement(
+                    role="product_reveal_reference",
+                    description=(
+                        "Reference showing the full product form, silhouette, and locked hero "
+                        "identity that must persist across the sequence."
+                    ),
+                    count=3,
+                    approval_required=True,
+                )
+            ],
+            take_generation_defaults=TakeGenerationDefaults(
+                target_take_count=3,
+                variation_axes=[
+                    "hero angle",
+                    "reveal timing",
+                    "product placement",
+                ],
+                preserve_approved_board_text=True,
+                notes=[
+                    "Keep the product instantly recognizable from the approved board.",
+                    "Do not drift into a new package, mascot, or object design.",
+                ],
+            ),
+            storyboard_board=StoryboardBoardSpec(
+                title="Reveal",
+                hook_role="product_reveal",
+                on_frame_text="{product_category_copy}",
+                layout_notes=(
+                    "Show the full hero product clearly, keep the copy short at the top, and "
+                    "use the board to reset orientation before the proof/demo beat."
+                ),
+            ),
+            variation_hints=[
+                "Try one take with a straight-on hero reveal.",
+                "Try one take with a slight three-quarter angle.",
+                "Try one take with a gentler product settle into frame.",
+            ],
+        ),
+        PresetShotTemplate(
+            template_id="benefit_demo",
+            sequence_order=4,
+            intent="Demonstrate the core benefit in one simple readable beat.",
+            role="benefit_demo",
             subject_template="{product_name} in use, clearly showing {key_benefit}",
             environment_template="{environment}; premium demo setup for {audience}",
             motion_beat_template=(
                 "Product enters or rotates into view, then performs the simple demo beat"
             ),
             camera_language=(
-                "Medium close product reveal, smooth push-in, clean parallax, realistic handoff"
+                "Medium close product demo, smooth push-in, clean parallax, readable action"
             ),
-            duration_target_seconds=3.0,
+            duration_target_seconds=1.5,
             reference_requirements=[
                 ReferenceRequirement(
                     role="demo_reference",
@@ -104,10 +256,20 @@ PREMIUM_PRODUCT_MACRO_REVEAL_PACKSHOT = PresetSpec(
                     "product orientation",
                     "camera push intensity",
                 ],
+                preserve_approved_board_text=True,
                 notes=[
                     "The demo should be visually understandable without captions.",
                     "Keep motion simple enough for review and winner selection.",
                 ],
+            ),
+            storyboard_board=StoryboardBoardSpec(
+                title="Proof",
+                hook_role="benefit_proof",
+                on_frame_text="{use_case_copy}",
+                layout_notes=(
+                    "Anchor the short proof copy near the top, show the product action "
+                    "clearly in one board, and keep spacing clean so the proof reads fast."
+                ),
             ),
             variation_hints=[
                 "Try one take with a clean hand interaction.",
@@ -116,8 +278,67 @@ PREMIUM_PRODUCT_MACRO_REVEAL_PACKSHOT = PresetSpec(
             ],
         ),
         PresetShotTemplate(
+            template_id="identity_lock",
+            sequence_order=5,
+            intent="Reinforce the signature brand/object cue that should persist across every board.",
+            role="identity_lock",
+            subject_template=(
+                "{product_name} anchored by {supporting_detail}, preserving the same hero "
+                "subject/object set"
+            ),
+            environment_template=(
+                "{environment}; clean identity board with room for the supporting hero cue"
+            ),
+            motion_beat_template=(
+                "Hold on the signature brand/object cue, then give it a small premium accent move."
+            ),
+            camera_language=(
+                "Controlled medium close framing, strong subject separation, brand-safe clarity"
+            ),
+            duration_target_seconds=1.2,
+            reference_requirements=[
+                ReferenceRequirement(
+                    role="identity_lock_reference",
+                    description=(
+                        "Reference showing the signature mascot, product companion object, or "
+                        "brand cue that must persist through the sequence."
+                    ),
+                    count=3,
+                    approval_required=True,
+                )
+            ],
+            take_generation_defaults=TakeGenerationDefaults(
+                target_take_count=3,
+                variation_axes=[
+                    "supporting cue placement",
+                    "hero spacing",
+                    "accent light direction",
+                ],
+                preserve_approved_board_text=True,
+                notes=[
+                    "Keep the same brand/object identity from the approved storyboard board.",
+                    "Do not introduce new supporting props that replace the locked cue.",
+                ],
+            ),
+            storyboard_board=StoryboardBoardSpec(
+                title="Identity",
+                hook_role="identity_lock",
+                on_frame_text="{supporting_detail_copy}",
+                layout_notes=(
+                    "Use one signature supporting cue beside the hero product, keep the board "
+                    "clean and legible, and reinforce the same subject/object set before the "
+                    "final payoff."
+                ),
+            ),
+            variation_hints=[
+                "Try one take with the supporting cue slightly behind the product.",
+                "Try one take with the cue tighter to the hero subject.",
+                "Try one take with a cleaner negative-space composition.",
+            ],
+        ),
+        PresetShotTemplate(
             template_id="packshot_payoff",
-            sequence_order=3,
+            sequence_order=6,
             intent="Land the product memory with a final hero packshot payoff.",
             role="packshot_payoff",
             subject_template=("Hero packshot of {product_name}, anchored by {supporting_detail}"),
@@ -128,7 +349,7 @@ PREMIUM_PRODUCT_MACRO_REVEAL_PACKSHOT = PresetSpec(
             camera_language=(
                 "Locked hero product angle, polished commercial lighting, stable final frame"
             ),
-            duration_target_seconds=3.0,
+            duration_target_seconds=2.0,
             reference_requirements=[
                 ReferenceRequirement(
                     role="packshot_reference",
@@ -147,10 +368,21 @@ PREMIUM_PRODUCT_MACRO_REVEAL_PACKSHOT = PresetSpec(
                     "background depth",
                     "payoff hold timing",
                 ],
+                preserve_approved_board_text=True,
                 notes=[
                     "Hold the final product identity cleanly for review.",
                     "Leave the shot uncluttered for downstream edit decisions.",
                 ],
+            ),
+            storyboard_board=StoryboardBoardSpec(
+                title="Payoff",
+                hook_role="packshot_payoff",
+                on_frame_text="{brand_display_name}",
+                layout_notes=(
+                    "Use minimal payoff copy near the top or corner, center the hero "
+                    "packshot, and leave clean negative space so the board feels like a "
+                    "premium designed end card."
+                ),
             ),
             variation_hints=[
                 "Try one take with a straight-on hero angle.",

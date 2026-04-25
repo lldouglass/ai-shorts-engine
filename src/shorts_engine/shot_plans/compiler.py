@@ -11,10 +11,13 @@ from typing import Any
 from shorts_engine.shot_plans.contracts import (
     BrandRuntimeInput,
     CompiledShotPlan,
+    PresetSpec,
     ProductConceptInput,
     ReferenceRequirement,
     ShotSpec,
     ShotTakeRequest,
+    StoryboardBoardSpec,
+    StoryboardDeckSpec,
     TakeGenerationDefaults,
 )
 from shorts_engine.shot_plans.presets import get_shot_plan_preset
@@ -40,12 +43,13 @@ def compile_shot_plan(
     product_input = _coerce_product(product, concept)
     brand_input = _coerce_brand(brand)
     runtime_target_seconds = brand_input.runtime_target_seconds or preset.runtime_target_seconds
-    plan_id = _plan_id(preset_id, preset_version, product_input, brand_input)
     context = _build_template_context(product_input, brand_input)
+    plan_id = _plan_id(preset, product_input, brand_input)
     durations = _scaled_durations(
         [template.duration_target_seconds for template in preset.shot_templates],
         runtime_target_seconds,
     )
+    storyboard_deck = _render_storyboard_deck(preset.storyboard_deck, context)
 
     shots: list[ShotSpec] = []
     for template, duration_target_seconds in zip(
@@ -69,6 +73,7 @@ def compile_shot_plan(
         environment = _render_template(template.environment_template, context)
         motion_beat = _render_template(template.motion_beat_template, context)
         camera_language = template.camera_language
+        storyboard_board = _render_storyboard_board(template.storyboard_board, context)
 
         take_request = ShotTakeRequest(
             take_request_id=f"{shot_id}_take_request",
@@ -83,6 +88,8 @@ def compile_shot_plan(
             motion_beat=motion_beat,
             camera_language=camera_language,
             duration_target_seconds=duration_target_seconds,
+            storyboard_deck=storyboard_deck,
+            storyboard_board=storyboard_board,
             reference_requirements=reference_requirements,
             generation_defaults=generation_defaults,
             variation_hints=variation_hints,
@@ -106,6 +113,8 @@ def compile_shot_plan(
                 motion_beat=motion_beat,
                 camera_language=camera_language,
                 duration_target_seconds=duration_target_seconds,
+                storyboard_deck=storyboard_deck,
+                storyboard_board=storyboard_board,
                 reference_requirements=reference_requirements,
                 take_generation_defaults=generation_defaults,
                 variation_hints=variation_hints,
@@ -119,6 +128,7 @@ def compile_shot_plan(
         product=product_input,
         brand=brand_input,
         runtime_target_seconds=runtime_target_seconds,
+        storyboard_deck=storyboard_deck,
         shots=shots,
     )
 
@@ -155,6 +165,15 @@ def _build_template_context(
     environment = brand.environment or "minimal premium studio environment"
     supporting_detail = product.supporting_detail or key_benefit
     concept = product.concept or f"{product.product_name} premium product short"
+    benefit_copy = _short_copy(key_benefit, limit=56)
+    sensory_copy = _short_copy(primary_sensory_cue, limit=56)
+    use_case_copy = _short_copy(product.use_case or key_benefit, limit=56)
+    product_category_copy = _short_copy(
+        product.product_category or product.product_name,
+        limit=48,
+    )
+    supporting_detail_copy = _short_copy(supporting_detail, limit=56)
+    brand_display_name = brand.brand_name or _short_copy(product.product_name, limit=40)
 
     return {
         "product_name": product.product_name,
@@ -166,9 +185,15 @@ def _build_template_context(
         "supporting_detail": supporting_detail,
         "use_case": product.use_case or "daily use",
         "brand_name": brand.brand_name or "the brand",
+        "brand_display_name": brand_display_name,
         "brand_voice": brand.brand_voice or "premium and direct",
         "visual_style": brand.visual_style or "cinematic premium realism",
         "environment": environment,
+        "benefit_copy": benefit_copy,
+        "sensory_copy": sensory_copy,
+        "use_case_copy": use_case_copy,
+        "product_category_copy": product_category_copy,
+        "supporting_detail_copy": supporting_detail_copy,
     }
 
 
@@ -183,6 +208,48 @@ def _render_reference_requirement(
 
 def _compile_take_defaults(defaults: TakeGenerationDefaults) -> TakeGenerationDefaults:
     return defaults.model_copy()
+
+
+def _render_storyboard_deck(
+    storyboard_deck: StoryboardDeckSpec,
+    context: Mapping[str, str],
+) -> StoryboardDeckSpec:
+    return storyboard_deck.model_copy(
+        update={
+            "visual_world": _render_template(storyboard_deck.visual_world, context),
+            "layout_system": _render_template(storyboard_deck.layout_system, context),
+            "copy_style": _render_template(storyboard_deck.copy_style, context),
+            "continuity_locks": [
+                _render_template(lock, context) for lock in storyboard_deck.continuity_locks
+            ],
+        }
+    )
+
+
+def _render_storyboard_board(
+    storyboard_board: StoryboardBoardSpec,
+    context: Mapping[str, str],
+) -> StoryboardBoardSpec:
+    return storyboard_board.model_copy(
+        update={
+            "title": (
+                _render_template(storyboard_board.title, context)
+                if storyboard_board.title
+                else None
+            ),
+            "hook_role": (
+                _render_template(storyboard_board.hook_role, context)
+                if storyboard_board.hook_role
+                else None
+            ),
+            "on_frame_text": (
+                _render_template(storyboard_board.on_frame_text, context)
+                if storyboard_board.on_frame_text
+                else None
+            ),
+            "layout_notes": _render_template(storyboard_board.layout_notes, context),
+        }
+    )
 
 
 def _render_template(template: str, context: Mapping[str, str]) -> str:
@@ -203,21 +270,21 @@ def _scaled_durations(base_durations: list[float], runtime_target_seconds: float
 
 
 def _plan_id(
-    preset_id: str,
-    preset_version: str,
+    preset: PresetSpec,
     product: ProductConceptInput,
     brand: BrandRuntimeInput,
 ) -> str:
     payload = {
-        "preset_id": preset_id,
-        "preset_version": preset_version,
+        "preset_id": preset.preset_id,
+        "preset_version": preset.version,
+        "preset_spec": preset.model_dump(mode="json"),
         "product": product.model_dump(mode="json", exclude_none=True),
         "brand": brand.model_dump(mode="json", exclude_none=True),
     }
     digest = hashlib.sha256(
         json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
     ).hexdigest()[:12]
-    return f"shotplan_{_slug(preset_id)}_{_slug(preset_version)}_{digest}"
+    return f"shotplan_{_slug(preset.preset_id)}_{_slug(preset.version)}_{digest}"
 
 
 def _shot_id(
@@ -233,3 +300,25 @@ def _shot_id(
 def _slug(value: str) -> str:
     slug = re.sub(r"[^a-zA-Z0-9]+", "_", value.strip().lower()).strip("_")
     return slug or "item"
+
+
+def _short_copy(value: str, *, limit: int) -> str:
+    cleaned = " ".join(value.split()).strip().rstrip(".")
+    if len(cleaned) <= limit:
+        return cleaned
+
+    for separator in (" with ", ";", ".", ",", " but ", " for "):
+        if separator not in cleaned:
+            continue
+        candidate = cleaned.split(separator, 1)[0].strip()
+        if 8 <= len(candidate) <= limit:
+            return candidate
+
+    words: list[str] = []
+    for word in cleaned.split():
+        candidate = " ".join([*words, word])
+        if len(candidate) > limit:
+            break
+        words.append(word)
+
+    return " ".join(words) if words else cleaned[:limit].rstrip()

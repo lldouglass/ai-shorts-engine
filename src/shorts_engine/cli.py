@@ -486,6 +486,74 @@ def shorts_tall_owl_first_frame_review(
     typer.echo(payload, nl=False)
 
 
+@shorts_app.command("storyboard-first-smoke")
+def shorts_storyboard_first_smoke(
+    benchmark: str = typer.Option(
+        "tall-owl",
+        "--benchmark",
+        help="Storyboard smoke benchmark id",
+    ),
+    output_root: Path = typer.Option(
+        Path("output/storyboard_smoke"),
+        "--output-root",
+        help="Root directory for smoke artifacts",
+    ),
+    job_id: str = typer.Option(
+        "storyboard_smoke_tall_owl_v1",
+        "--job-id",
+        help="Stable job id used for artifact paths and ids",
+    ),
+    candidates_per_shot: int = typer.Option(
+        2,
+        "--candidates-per-shot",
+        min=1,
+        help="Number of storyboard-board candidates to generate per shot",
+    ),
+    take_count: int = typer.Option(
+        1,
+        "--take-count",
+        min=1,
+        help="Number of motion takes to generate per approved shot",
+    ),
+) -> None:
+    """Run the storyboard-first smoke path end to end with deterministic stubs."""
+    from shorts_engine.services.storyboard_smoke import run_storyboard_first_smoke_sync
+
+    try:
+        result = run_storyboard_first_smoke_sync(
+            benchmark_id=benchmark,
+            output_root=output_root,
+            job_id=job_id,
+            candidates_per_shot=candidates_per_shot,
+            take_count=take_count,
+        )
+    except ValueError as e:
+        console.print(f"[bold red]Error: {e}[/bold red]")
+        raise typer.Exit(code=1)
+    except Exception as e:
+        console.print(f"[bold red]Smoke run failed: {e}[/bold red]")
+        raise typer.Exit(code=1)
+
+    console.print("[bold green]Storyboard-first smoke completed[/bold green]")
+    console.print(f"[cyan]Benchmark:[/cyan] {result.benchmark_id}")
+    console.print(f"[cyan]Job ID:[/cyan] {result.job_id}")
+    console.print(f"[cyan]Run Dir:[/cyan] {result.artifacts.run_dir}")
+    console.print(f"[cyan]Compiled Plan:[/cyan] {result.artifacts.compiled_shot_plan_path}")
+    console.print(
+        f"[cyan]First-Frame Review Payload:[/cyan] "
+        f"{result.artifacts.first_frame_review_payload_path}"
+    )
+    console.print(f"[cyan]Ref Pack:[/cyan] {result.artifacts.ref_pack_path}")
+    console.print(f"[cyan]Approvals:[/cyan] {result.artifacts.approvals_path}")
+    console.print(f"[cyan]Approved Plan:[/cyan] {result.artifacts.approved_shot_plan_path}")
+    console.print(
+        f"[cyan]Reference Candidate Assets:[/cyan] "
+        f"{len(result.reference_candidate_asset_paths)}"
+    )
+    console.print(f"[cyan]Motion Take Assets:[/cyan] {len(result.motion_take_asset_paths)}")
+    console.print(f"[cyan]Summary:[/cyan] {result.artifacts.summary_path}")
+
+
 def _show_job_details(job_id: str) -> None:
     """Display detailed job information."""
     from sqlalchemy import select
@@ -2133,7 +2201,9 @@ def story_generate(
             project_record = session.get(ProjectModel, project_uuid)
             if not project_record:
                 console.print(f"[bold red]Project not found: {project}[/bold red]")
-                console.print("[dim]Use 'shorts-engine projects list' to see available projects[/dim]")
+                console.print(
+                    "[dim]Use 'shorts-engine projects list' to see available projects[/dim]"
+                )
                 raise typer.Exit(code=1)
             project_name = project_record.name
 
@@ -2184,7 +2254,7 @@ def story_generate(
             raise typer.Exit()
 
         elif action == "regenerate":
-            console.print(f"\n[dim]Current topic: \"{current_topic}\"[/dim]")
+            console.print(f'\n[dim]Current topic: "{current_topic}"[/dim]')
             new_topic = console.input("[dim]New topic (or Enter to keep): [/dim]").strip()
             if new_topic:
                 current_topic = new_topic
@@ -2220,7 +2290,9 @@ def story_generate(
                         for i, p in enumerate(projects, 1):
                             console.print(f"  {i}. {p.name} ({str(p.id)[:8]}...)")
 
-                        console.print("\n[dim]Enter project number, ID, or 'skip' to save story only:[/dim]")
+                        console.print(
+                            "\n[dim]Enter project number, ID, or 'skip' to save story only:[/dim]"
+                        )
                         choice = console.input("[dim]Project: [/dim]").strip()
 
                         if choice.lower() == "skip":
@@ -2232,18 +2304,26 @@ def story_generate(
                             try:
                                 project_uuid = UUID(choice)
                             except ValueError:
-                                console.print("[bold red]Invalid choice. Saving story without video job.[/bold red]")
+                                console.print(
+                                    "[bold red]Invalid choice. Saving story without video job.[/bold red]"
+                                )
                                 project_uuid = None
                     else:
-                        console.print("[dim]No projects found. Create one with 'shorts-engine projects create'[/dim]")
-                        console.print("[dim]Story will be saved without creating a video job.[/dim]")
+                        console.print(
+                            "[dim]No projects found. Create one with 'shorts-engine projects create'[/dim]"
+                        )
+                        console.print(
+                            "[dim]Story will be saved without creating a video job.[/dim]"
+                        )
 
             # Save story to database
             with get_session_context() as session:
                 # Need a project_id for the story - use selected or fail
                 if not project_uuid:
                     console.print("[bold red]Cannot save story without a project.[/bold red]")
-                    console.print("[dim]Create a project first with: shorts-engine projects create --name 'My Project'[/dim]")
+                    console.print(
+                        "[dim]Create a project first with: shorts-engine projects create --name 'My Project'[/dim]"
+                    )
                     raise typer.Exit(code=1)
 
                 from datetime import datetime as dt
@@ -2315,7 +2395,9 @@ def story_generate(
 @story_app.command("list")
 def story_list(
     project: str | None = typer.Option(None, "--project", "-p", help="Filter by project ID"),
-    status: str | None = typer.Option(None, "--status", "-s", help="Filter by status (draft, approved, used)"),
+    status: str | None = typer.Option(
+        None, "--status", "-s", help="Filter by status (draft, approved, used)"
+    ),
     limit: int = typer.Option(20, "--limit", "-n", help="Number of stories to show"),
 ) -> None:
     """List stories."""

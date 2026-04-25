@@ -62,7 +62,10 @@ def test_flagship_preset_fixture_validates() -> None:
     assert preset.version == FLAGSHIP_PRESET_VERSION
     assert [shot.role for shot in preset.shot_templates] == [
         "macro_hook",
-        "reveal_demo",
+        "sensory_lock_detail",
+        "product_reveal",
+        "benefit_demo",
+        "identity_lock",
         "packshot_payoff",
     ]
 
@@ -87,8 +90,8 @@ def test_compile_output_is_deterministic() -> None:
     assert first.model_dump_json() == second.model_dump_json()
 
 
-def test_compiler_emits_clean_three_shot_plan() -> None:
-    """The flagship compiler emits a downstream-ready three-shot package."""
+def test_compiler_emits_clean_six_shot_plan() -> None:
+    """The flagship compiler emits a downstream-ready six-shot package."""
     plan = compile_shot_plan(
         FLAGSHIP_PRESET_ID,
         FLAGSHIP_PRESET_VERSION,
@@ -98,12 +101,22 @@ def test_compiler_emits_clean_three_shot_plan() -> None:
     round_tripped = CompiledShotPlan.model_validate_json(plan.model_dump_json())
 
     assert round_tripped == plan
-    assert plan.shot_count == 3
+    assert plan.shot_count == 6
     assert plan.runtime_target_seconds == pytest.approx(8.0)
+    assert "premium product world" in plan.storyboard_deck.visual_world
+    assert "beat-deck / motionized-carousel layout" in plan.storyboard_deck.layout_system
+    assert "Short sentence-case board copy" in plan.storyboard_deck.copy_style
+    assert len(plan.storyboard_deck.continuity_locks) == 4
+    assert "Aurum Glow Serum" in plan.storyboard_deck.continuity_locks[0]
+    assert "glass dropper and luminous serum bead" in plan.storyboard_deck.continuity_locks[1]
+    assert "golden serum bead texture on glass" in plan.storyboard_deck.continuity_locks[2]
     assert sum(shot.duration_target_seconds for shot in plan.shots) == pytest.approx(8.0)
     assert [shot.role for shot in plan.shots] == [
         "macro_hook",
-        "reveal_demo",
+        "sensory_lock_detail",
+        "product_reveal",
+        "benefit_demo",
+        "identity_lock",
         "packshot_payoff",
     ]
 
@@ -117,6 +130,13 @@ def test_compiler_emits_clean_three_shot_plan() -> None:
         assert "{" not in shot.motion_beat
         assert shot.camera_language
         assert shot.duration_target_seconds > 0
+        assert shot.storyboard_deck == plan.storyboard_deck
+        assert shot.storyboard_deck.continuity_locks == plan.storyboard_deck.continuity_locks
+        assert shot.storyboard_board.title
+        assert shot.storyboard_board.hook_role
+        assert shot.storyboard_board.on_frame_text
+        assert "{" not in shot.storyboard_board.on_frame_text
+        assert shot.storyboard_board.layout_notes
         assert shot.reference_requirements
         assert shot.take_request
         assert shot.status == ShotStatus.NEEDS_REFERENCES
@@ -145,11 +165,16 @@ def test_take_request_metadata_supports_refs_takes_and_review() -> None:
         assert take_request.motion_beat == shot.motion_beat
         assert take_request.camera_language == shot.camera_language
         assert take_request.duration_target_seconds == shot.duration_target_seconds
+        assert take_request.storyboard_deck == shot.storyboard_deck
+        assert take_request.storyboard_board == shot.storyboard_board
+        assert take_request.storyboard_deck.continuity_locks == shot.storyboard_deck.continuity_locks
         assert take_request.reference_requirements == shot.reference_requirements
+        assert take_request.approved_board is None
         assert take_request.status == TakeRequestStatus.BLOCKED_ON_REFERENCES
 
         assert take_request.generation_defaults.target_take_count == 3
         assert take_request.generation_defaults.seed_policy == "deterministic_per_shot_take"
+        assert take_request.generation_defaults.preserve_approved_board_text is True
         assert take_request.generation_defaults.requires_approved_reference is True
         assert take_request.generation_defaults.avoid_visible_text is True
         assert take_request.generation_defaults.variation_axes
@@ -174,7 +199,7 @@ def test_planner_service_compiles_flagship_shot_plan() -> None:
     assert plan.product.product_name == "Aurum Glow Serum"
     assert plan.brand
     assert plan.brand.brand_name == "Aurum"
-    assert plan.shot_count == 3
+    assert plan.shot_count == 6
 
 
 def test_shorts_compile_shot_plan_cli_prints_json() -> None:
@@ -200,7 +225,7 @@ def test_shorts_compile_shot_plan_cli_prints_json() -> None:
     assert data["preset"]["preset_id"] == FLAGSHIP_PRESET_ID
     assert data["product"]["product_name"] == "Aurum Glow Serum"
     assert data["brand"]["brand_name"] == "Aurum"
-    assert len(data["shots"]) == 3
+    assert len(data["shots"]) == 6
 
 
 def test_shorts_compile_shot_plan_cli_writes_json(tmp_path: Path) -> None:
@@ -227,4 +252,4 @@ def test_shorts_compile_shot_plan_cli_writes_json(tmp_path: Path) -> None:
     data = json.loads(output_path.read_text())
     assert data["preset"]["preset_id"] == FLAGSHIP_PRESET_ID
     assert data["product"]["key_benefit"] == "a clean glass-skin glow in one drop"
-    assert len(data["shots"]) == 3
+    assert len(data["shots"]) == 6

@@ -45,6 +45,11 @@ class VideoGenProvider(ABC):
         """Provider name identifier."""
         ...
 
+    @property
+    def supports_reference_images(self) -> bool:
+        """Whether this provider path can accept reference-image inputs."""
+        return False
+
     @abstractmethod
     async def generate(self, request: VideoGenRequest) -> VideoGenResult:
         """Generate a video from the given request.

@@ -44,6 +44,10 @@ class ShotTakeLineage(ContractModel):
     preset_version: str = Field(min_length=1)
     sequence_order: int = Field(ge=1)
     source_plan_id: str | None = Field(default=None, min_length=1)
+    approved_board_ref_id: str | None = Field(default=None, min_length=1)
+    approved_board_asset_path: str | None = Field(default=None, min_length=1)
+    approved_board_source_ref_pack_id: str | None = Field(default=None, min_length=1)
+    approved_board_source_review_payload_id: str | None = Field(default=None, min_length=1)
     reference_asset_paths: list[str] = Field(default_factory=list)
     provider_job_id: str | None = Field(default=None, min_length=1)
     request_metadata: dict[str, Any] = Field(default_factory=dict)
@@ -65,6 +69,7 @@ class ShotTakeArtifact(ContractModel):
     status: ShotTakeStatus
     error_message: str | None = Field(default=None, min_length=1)
     lineage: ShotTakeLineage
+    provider_metadata: dict[str, Any] = Field(default_factory=dict)
 
     @model_validator(mode="after")
     def validate_status_fields(self) -> ShotTakeArtifact:

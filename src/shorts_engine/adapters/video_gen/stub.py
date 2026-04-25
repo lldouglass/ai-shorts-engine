@@ -21,6 +21,10 @@ class StubVideoGenProvider(VideoGenProvider):
     def name(self) -> str:
         return "stub"
 
+    @property
+    def supports_reference_images(self) -> bool:
+        return True
+
     async def generate(self, request: VideoGenRequest) -> VideoGenResult:
         """Simulate video generation with a delay."""
         logger.info(

@@ -64,6 +64,10 @@ class VeoProvider(VideoGenProvider):
         """Provider name identifier."""
         return "veo"
 
+    @property
+    def supports_reference_images(self) -> bool:
+        return "3.1" in self.model
+
     async def generate(self, request: VideoGenRequest) -> VideoGenResult:
         """Generate a video using Google Veo.
 
@@ -142,9 +146,9 @@ class VeoProvider(VideoGenProvider):
 
         client = self._get_client()
 
-        # Build reference images config if provided
+        # Build reference images config if provided.
         # NOTE: Reference images are documented for Veo 3.1 but may not be available
-        # for all API access levels. We attempt to use them but gracefully skip if unsupported.
+        # for all API access levels. When requested, unsupported access must fail closed.
         reference_images_config = None
         if reference_images and "3.1" in self.model:
             try:
@@ -186,8 +190,9 @@ class VeoProvider(VideoGenProvider):
         if reference_images_config:
             config_kwargs["reference_images"] = reference_images_config
 
-        # Submit the generation request
-        # If reference images cause "use case not supported" error, retry without them
+        # Submit the generation request.
+        # Storyboard-first motion generation must fail closed if the configured
+        # Veo path cannot honor reference-image inputs.
         try:
             operation = client.models.generate_videos(
                 model=self.model,
@@ -198,18 +203,11 @@ class VeoProvider(VideoGenProvider):
             error_str = str(e)
             if "not supported" in error_str.lower() and reference_images_config:
                 logger.warning(
-                    "veo_reference_images_not_supported_retrying",
+                    "veo_reference_images_not_supported",
                     error=error_str,
-                )
-                # Retry without reference images
-                config_kwargs.pop("reference_images", None)
-                operation = client.models.generate_videos(
                     model=self.model,
-                    prompt=prompt,
-                    config=types.GenerateVideosConfig(**config_kwargs),
                 )
-            else:
-                raise
+            raise
 
         operation_name = operation.name
         logger.info("veo_generation_submitted", operation_name=operation_name)

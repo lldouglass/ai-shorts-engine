@@ -5,12 +5,14 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
+import mimetypes
 import re
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Protocol
+from urllib.parse import unquote, urlparse
 
 import httpx
 
@@ -62,6 +64,114 @@ class ReferenceImageGenerator(Protocol):
     ) -> GeneratedReferenceImage: ...
 
 
+class OpenAIReferenceImageGenerator:
+    """Generate still references through OpenAI's GPT Image route."""
+
+    DEFAULT_MODEL = "gpt-image-1"
+    API_BASE_URL = "https://api.openai.com/v1"
+
+    def __init__(
+        self,
+        *,
+        api_key: str | None = None,
+        model: str | None = None,
+        timeout_seconds: float = 120.0,
+    ) -> None:
+        self.api_key = api_key or settings.openai_api_key
+        self.model = model or self.DEFAULT_MODEL
+        self.timeout_seconds = timeout_seconds
+
+    async def generate(
+        self,
+        prompt: str,
+        *,
+        candidate_index: int,
+        aspect_ratio: str,
+        model: str,
+        shot: FirstFrameReviewShot,
+        reference_assets: Sequence[FirstFrameReferenceAsset],
+    ) -> GeneratedReferenceImage:
+        """Call OpenAI's image API, preserving lock assets when they are available."""
+        if not self.api_key:
+            raise ValueError("OpenAI API key not configured for reference generation")
+
+        endpoint = "images/edits" if reference_assets else "images/generations"
+        payload: dict[str, Any] = {
+            "model": model,
+            "prompt": _build_openai_prompt(prompt, reference_assets),
+            "size": _openai_size_for_aspect_ratio(aspect_ratio),
+            "quality": "high",
+            "output_format": "png",
+            "background": "opaque",
+            "n": 1,
+        }
+        if reference_assets:
+            payload["images"] = _build_openai_input_images(reference_assets)
+            payload["input_fidelity"] = "high"
+
+        logger.info(
+            "ref_pack_reference_request_started",
+            provider="openai",
+            endpoint=endpoint,
+            model=model,
+            shot_id=shot.shot_id,
+            candidate_index=candidate_index,
+            aspect_ratio=aspect_ratio,
+            reference_asset_count=len(reference_assets),
+        )
+
+        async with httpx.AsyncClient(timeout=self.timeout_seconds) as client:
+            response = await client.post(
+                f"{self.API_BASE_URL}/{endpoint}",
+                headers={
+                    "Authorization": f"Bearer {self.api_key}",
+                    "Content-Type": "application/json",
+                },
+                json=payload,
+            )
+            response.raise_for_status()
+
+        response_payload = response.json()
+        image_b64 = _extract_openai_image_b64(response_payload)
+        if image_b64 is None:
+            raise RuntimeError(
+                f"OpenAI did not return an image for {shot.shot_id} candidate {candidate_index}"
+            )
+
+        output_format = str(response_payload.get("output_format", "png"))
+        image_bytes = base64.b64decode(image_b64)
+        mime_type = _mime_type_for_output_format(output_format)
+
+        logger.info(
+            "ref_pack_reference_request_completed",
+            provider="openai",
+            endpoint=endpoint,
+            model=model,
+            shot_id=shot.shot_id,
+            candidate_index=candidate_index,
+            image_bytes=len(image_bytes),
+        )
+
+        provider_params = {
+            "provider": f"openai_{endpoint.replace('/', '_')}",
+            "size": payload["size"],
+            "quality": payload["quality"],
+            "output_format": output_format,
+            "reference_asset_count": len(reference_assets),
+        }
+        if reference_assets:
+            provider_params["input_fidelity"] = payload["input_fidelity"]
+        usage = response_payload.get("usage")
+        if isinstance(usage, Mapping):
+            provider_params["usage"] = dict(usage)
+
+        return GeneratedReferenceImage(
+            image_bytes=image_bytes,
+            mime_type=mime_type,
+            provider_params=provider_params,
+        )
+
+
 class GeminiNanoBananaReferenceImageGenerator:
     """Generate still references through the preferred Gemini Nano Banana route."""
 
@@ -94,7 +204,7 @@ class GeminiNanoBananaReferenceImageGenerator:
             raise ValueError("Google API key not configured for Nano Banana reference generation")
 
         payload = {
-            "contents": [{"parts": [{"text": prompt}]}],
+            "contents": [{"parts": _build_gemini_contents_parts(prompt, reference_assets)}],
             "generationConfig": {
                 "responseModalities": ["TEXT", "IMAGE"],
             },
@@ -150,11 +260,11 @@ class RefPackGenerator:
         image_generator: ReferenceImageGenerator | None = None,
         output_root: Path | None = None,
         now_factory: Callable[[], datetime] = _utc_now,
-        reference_model: str = GeminiNanoBananaReferenceImageGenerator.DEFAULT_MODEL,
+        reference_model: str = OpenAIReferenceImageGenerator.DEFAULT_MODEL,
     ) -> None:
         self.reference_model = reference_model
-        self.image_generator = image_generator or GeminiNanoBananaReferenceImageGenerator(
-            model=reference_model
+        self.image_generator = image_generator or _default_reference_image_generator_for_model(
+            reference_model
         )
         self.output_root = output_root or Path("storage/references")
         self.now_factory = now_factory
@@ -292,6 +402,120 @@ def _extract_inline_image_part(payload: Mapping[str, Any]) -> Mapping[str, Any] 
     return None
 
 
+def _extract_openai_image_b64(payload: Mapping[str, Any]) -> str | None:
+    data = payload.get("data")
+    if not isinstance(data, list):
+        return None
+
+    for item in data:
+        if not isinstance(item, Mapping):
+            continue
+        b64_json = item.get("b64_json")
+        if isinstance(b64_json, str) and b64_json:
+            return b64_json
+
+    return None
+
+
+def _build_openai_prompt(
+    prompt: str,
+    reference_assets: Sequence[FirstFrameReferenceAsset],
+) -> str:
+    if not reference_assets:
+        return prompt
+
+    lines = [prompt, "", "Sequence lock reference assets to preserve:"]
+    for asset in reference_assets:
+        if not asset.required:
+            continue
+        lines.append(f"- {asset.asset_id} ({asset.role}): {asset.description}")
+    return "\n".join(lines)
+
+
+def _build_openai_input_images(
+    reference_assets: Sequence[FirstFrameReferenceAsset],
+) -> list[dict[str, str]]:
+    images: list[dict[str, str]] = []
+    for asset in reference_assets:
+        if not asset.required:
+            continue
+        mime_type, data = _reference_asset_data_url(asset)
+        images.append({"image_url": f"data:{mime_type};base64,{data}"})
+    return images
+
+
+def _build_gemini_contents_parts(
+    prompt: str,
+    reference_assets: Sequence[FirstFrameReferenceAsset],
+) -> list[dict[str, Any]]:
+    parts: list[dict[str, Any]] = [{"text": prompt}]
+
+    for asset in reference_assets:
+        if not asset.required:
+            continue
+        parts.append(
+            {
+                "text": (
+                    f"Sequence lock reference asset {asset.asset_id} ({asset.role}): "
+                    f"{asset.description}"
+                )
+            }
+        )
+        parts.append(_reference_asset_inline_part(asset))
+
+    return parts
+
+
+def _reference_asset_inline_part(asset: FirstFrameReferenceAsset) -> dict[str, Any]:
+    asset_path = _resolve_local_reference_asset_path(asset.uri)
+    if asset_path is None:
+        raise ValueError(
+            f"Reference asset {asset.asset_id} must be a local file path or file:// URI: {asset.uri}"
+        )
+    if not asset_path.exists():
+        raise FileNotFoundError(f"Reference asset {asset.asset_id} not found on disk: {asset_path}")
+
+    mime_type = mimetypes.guess_type(asset_path.name)[0] or "image/png"
+    return {
+        "inlineData": {
+            "mimeType": mime_type,
+            "data": _reference_asset_base64(asset),
+        }
+    }
+
+
+def _reference_asset_base64(asset: FirstFrameReferenceAsset) -> str:
+    asset_path = _resolve_local_reference_asset_path(asset.uri)
+    if asset_path is None:
+        raise ValueError(
+            f"Reference asset {asset.asset_id} must be a local file path or file:// URI: {asset.uri}"
+        )
+    if not asset_path.exists():
+        raise FileNotFoundError(f"Reference asset {asset.asset_id} not found on disk: {asset_path}")
+    return base64.b64encode(asset_path.read_bytes()).decode("ascii")
+
+
+def _reference_asset_data_url(asset: FirstFrameReferenceAsset) -> tuple[str, str]:
+    asset_path = _resolve_local_reference_asset_path(asset.uri)
+    if asset_path is None:
+        raise ValueError(
+            f"Reference asset {asset.asset_id} must be a local file path or file:// URI: {asset.uri}"
+        )
+    if not asset_path.exists():
+        raise FileNotFoundError(f"Reference asset {asset.asset_id} not found on disk: {asset_path}")
+    mime_type = mimetypes.guess_type(asset_path.name)[0] or "image/png"
+    return mime_type, _reference_asset_base64(asset)
+
+
+def _resolve_local_reference_asset_path(uri: str) -> Path | None:
+    parsed = urlparse(uri)
+    if parsed.scheme in {"http", "https"}:
+        return None
+    if parsed.scheme == "file":
+        return Path(unquote(parsed.path)).expanduser()
+    return Path(uri).expanduser()
+
+
 def _resolve_review_payload(
     *,
     shot_plan: CompiledShotPlan | Mapping[str, Any] | None,
@@ -310,17 +534,19 @@ def _resolve_review_payload(
             else FirstFrameReviewPayload.model_validate(review_payload)
         )
         if reference_assets is not None:
-            raise ValueError("reference_assets cannot be overridden when review_payload is provided")
+            raise ValueError(
+                "reference_assets cannot be overridden when review_payload is provided"
+            )
         if review_guidance is not None:
             raise ValueError("review_guidance cannot be overridden when review_payload is provided")
         if aspect_ratio != payload.aspect_ratio:
-            raise ValueError(
-                "aspect_ratio must match the supplied review_payload aspect_ratio"
-            )
+            raise ValueError("aspect_ratio must match the supplied review_payload aspect_ratio")
         return payload
 
     resolved_shot_plan = (
-        shot_plan if isinstance(shot_plan, CompiledShotPlan) else CompiledShotPlan.model_validate(shot_plan)
+        shot_plan
+        if isinstance(shot_plan, CompiledShotPlan)
+        else CompiledShotPlan.model_validate(shot_plan)
     )
     return build_first_frame_review_payload(
         resolved_shot_plan,
@@ -331,7 +557,9 @@ def _resolve_review_payload(
 
 
 def _resolve_candidate_count(shot: FirstFrameReviewShot) -> int:
-    counts = [requirement.count for requirement in shot.reference_requirements if requirement.count > 0]
+    counts = [
+        requirement.count for requirement in shot.reference_requirements if requirement.count > 0
+    ]
     return max(counts) if counts else 1
 
 
@@ -341,23 +569,39 @@ def _build_candidate_prompt(
     candidate_index: int,
     candidate_count: int,
 ) -> str:
-    return "\n".join(
-        [
-            shot.review_prompt_text,
-            (
-                f"Generate candidate {candidate_index} of {candidate_count} for this shot. "
-                "Keep the locked product and brand constraints intact."
-            ),
-            (
-                "Vary the still direction slightly through composition, framing, depth, "
-                "or lighting while preserving the same role and intent."
-            ),
-        ]
-    )
+    parts = [
+        shot.review_prompt_text,
+        (
+            f"Generate candidate {candidate_index} of {candidate_count} for this shot. "
+            "Keep the locked product and brand constraints intact."
+        ),
+        (
+            "Treat this as a designed storyboard board / beat-deck frame, not a generic "
+            "clip frame. Keep one clear beat, the shared visual world, and the shared "
+            "layout system intact."
+        ),
+        "Sequence continuity locks:",
+        *[f"- {lock}" for lock in shot.storyboard_deck.continuity_locks],
+        (
+            "Preserve the same locked hero subject / product / object set across the "
+            "full sequence using the supplied sequence lock reference assets."
+        ),
+        (
+            "Vary the still direction slightly through composition, framing, depth, "
+            "or lighting while preserving the same role and intent."
+        ),
+    ]
+    return "\n".join(parts)
 
 
 def _build_prompt_summary(shot: FirstFrameReviewShot, candidate_index: int) -> str:
-    return f"Shot {shot.sequence_order} {shot.role} candidate {candidate_index}: {shot.intent}"
+    summary_label = (
+        shot.storyboard_board.on_frame_text or shot.storyboard_board.title or shot.intent
+    )
+    return (
+        f"Shot {shot.sequence_order} {shot.role} candidate {candidate_index}: "
+        f"{_truncate_text(summary_label, limit=120)}"
+    )
 
 
 def _build_ref_id(shot_id: str, candidate_index: int) -> str:
@@ -412,6 +656,40 @@ def _extension_for_mime_type(mime_type: str) -> str:
     return mime_map.get(mime_type.lower(), ".bin")
 
 
+def _mime_type_for_output_format(output_format: str) -> str:
+    format_map = {
+        "png": "image/png",
+        "jpeg": "image/jpeg",
+        "jpg": "image/jpeg",
+        "webp": "image/webp",
+    }
+    return format_map.get(output_format.lower(), "image/png")
+
+
+def _openai_size_for_aspect_ratio(aspect_ratio: str) -> str:
+    normalized = aspect_ratio.strip()
+    if normalized in {"1:1"}:
+        return "1024x1024"
+    if normalized in {"9:16", "4:5", "3:4", "2:3"}:
+        return "1024x1536"
+    if normalized in {"16:9", "5:4", "4:3", "3:2"}:
+        return "1536x1024"
+    return "1024x1024"
+
+
+def _default_reference_image_generator_for_model(model: str) -> ReferenceImageGenerator:
+    if model.startswith("gpt-image") or model == "chatgpt-image-latest":
+        return OpenAIReferenceImageGenerator(model=model)
+    return GeminiNanoBananaReferenceImageGenerator(model=model)
+
+
 def _slug(value: str) -> str:
     slug = re.sub(r"[^a-zA-Z0-9]+", "_", value.strip().lower()).strip("_")
     return slug or "item"
+
+
+def _truncate_text(value: str, *, limit: int) -> str:
+    cleaned = " ".join(value.split()).strip()
+    if len(cleaned) <= limit:
+        return cleaned
+    return cleaned[: limit - 3].rstrip() + "..."

@@ -9,8 +9,10 @@ from shorts_engine.shot_plans.benchmarks import (
     build_tall_owl_first_frame_review_payload,
     compile_tall_owl_benchmark_shot_plan,
 )
+from shorts_engine.shot_plans.approvals import apply_ref_pack_approvals
 from shorts_engine.shot_plans.compiler import compile_shot_plan
 from shorts_engine.shot_plans.contracts import (
+    ApprovedStoryboardBoard,
     BrandRuntimeInput,
     CompiledShotPlan,
     FirstFrameApprovalGate,
@@ -27,6 +29,8 @@ from shorts_engine.shot_plans.contracts import (
     ShotPlan,
     ShotSpec,
     ShotStatus,
+    StoryboardBoardSpec,
+    StoryboardDeckSpec,
     ShotTakeRequest,
     TakeGenerationDefaults,
     TakeRequestStatus,
@@ -47,9 +51,11 @@ __all__ = [
     "FLAGSHIP_PRESET_ID",
     "FLAGSHIP_PRESET_VERSION",
     "PREMIUM_PRODUCT_MACRO_REVEAL_PACKSHOT",
+    "ApprovedStoryboardBoard",
     "BrandRuntimeInput",
     "CompiledShotPlan",
     "DEFAULT_FIRST_FRAME_REVIEW_GUIDANCE",
+    "apply_ref_pack_approvals",
     "FirstFrameApprovalGate",
     "FirstFramePromptInputs",
     "FirstFrameReferenceAsset",
@@ -64,6 +70,8 @@ __all__ = [
     "ShotPlan",
     "ShotSpec",
     "ShotStatus",
+    "StoryboardBoardSpec",
+    "StoryboardDeckSpec",
     "ShotTakeRequest",
     "TakeGenerationDefaults",
     "TakeRequestStatus",

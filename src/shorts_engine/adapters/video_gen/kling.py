@@ -49,6 +49,10 @@ class KlingProvider(VideoGenProvider):
     def name(self) -> str:
         return "kling"
 
+    @property
+    def supports_reference_images(self) -> bool:
+        return True
+
     @staticmethod
     def _map_duration(duration_seconds: int) -> str:
         """Map integer duration to fal's string duration format."""

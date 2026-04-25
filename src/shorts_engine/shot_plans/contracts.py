@@ -9,6 +9,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 SHOT_PLAN_SCHEMA_VERSION = "shot-plan.v1"
 FIRST_FRAME_REVIEW_SCHEMA_VERSION = "first-frame-review.v1"
+MINIMUM_STORYBOARD_BOARDS = 6
 
 
 class ShotStatus(StrEnum):
@@ -69,8 +70,37 @@ class TakeGenerationDefaults(ContractModel):
     variation_strategy: str = Field(default="controlled_small_variations", min_length=1)
     variation_axes: list[str] = Field(default_factory=list)
     avoid_visible_text: bool = True
+    preserve_approved_board_text: bool = False
     requires_approved_reference: bool = True
     notes: list[str] = Field(default_factory=list)
+
+
+class StoryboardDeckSpec(ContractModel):
+    """Shared visual/copy system for a storyboard-first beat deck."""
+
+    visual_world: str = Field(min_length=1)
+    layout_system: str = Field(min_length=1)
+    copy_style: str = Field(min_length=1)
+    continuity_locks: list[str] = Field(min_length=1)
+
+
+class StoryboardBoardSpec(ContractModel):
+    """Per-shot board metadata for a designed still before motion."""
+
+    title: str | None = Field(default=None, min_length=1)
+    hook_role: str | None = Field(default=None, min_length=1)
+    on_frame_text: str | None = Field(default=None, min_length=1, max_length=160)
+    layout_notes: str = Field(min_length=1)
+
+
+class ApprovedStoryboardBoard(ContractModel):
+    """Approved board selection that motion takes must preserve."""
+
+    ref_id: str = Field(min_length=1)
+    asset_path: str = Field(min_length=1)
+    source_ref_pack_id: str | None = Field(default=None, min_length=1)
+    source_review_payload_id: str | None = Field(default=None, min_length=1)
+    first_frame_prompt_id: str | None = Field(default=None, min_length=1)
 
 
 class PresetShotTemplate(ContractModel):
@@ -87,6 +117,7 @@ class PresetShotTemplate(ContractModel):
     duration_target_seconds: float = Field(gt=0)
     reference_requirements: list[ReferenceRequirement] = Field(min_length=1)
     take_generation_defaults: TakeGenerationDefaults = Field(default_factory=TakeGenerationDefaults)
+    storyboard_board: StoryboardBoardSpec
     variation_hints: list[str] = Field(default_factory=list)
 
 
@@ -98,7 +129,8 @@ class PresetSpec(ContractModel):
     description: str = Field(min_length=1)
     aspect_ratio: str = Field(default="9:16", min_length=1)
     runtime_target_seconds: float = Field(gt=0)
-    shot_templates: list[PresetShotTemplate] = Field(min_length=1)
+    storyboard_deck: StoryboardDeckSpec
+    shot_templates: list[PresetShotTemplate] = Field(min_length=MINIMUM_STORYBOARD_BOARDS)
 
     @model_validator(mode="after")
     def validate_shot_templates(self) -> PresetSpec:
@@ -167,8 +199,11 @@ class ShotTakeRequest(ContractModel):
     motion_beat: str = Field(min_length=1)
     camera_language: str = Field(min_length=1)
     duration_target_seconds: float = Field(gt=0)
+    storyboard_deck: StoryboardDeckSpec
+    storyboard_board: StoryboardBoardSpec
     reference_requirements: list[ReferenceRequirement] = Field(min_length=1)
     generation_defaults: TakeGenerationDefaults
+    approved_board: ApprovedStoryboardBoard | None = None
     variation_hints: list[str] = Field(default_factory=list)
     status: TakeRequestStatus = TakeRequestStatus.BLOCKED_ON_REFERENCES
     metadata: dict[str, Any] = Field(default_factory=dict)
@@ -193,8 +228,8 @@ class FirstFrameApprovalGate(ContractModel):
     motion_generation_blocked: bool = True
     reason: str = Field(
         default=(
-            "Take generation is blocked until an approved first-frame/reference "
-            "is selected for this shot."
+            "Take generation is blocked until an approved storyboard board / "
+            "first-frame reference is selected for this shot."
         ),
         min_length=1,
     )
@@ -213,7 +248,10 @@ class FirstFramePromptInputs(ContractModel):
     subject: str = Field(min_length=1)
     environment: str = Field(min_length=1)
     camera_language: str = Field(min_length=1)
+    storyboard_deck: StoryboardDeckSpec
+    storyboard_board: StoryboardBoardSpec
     motion_beat_after_approval: str = Field(min_length=1)
+    preserve_approved_board_text: bool = False
     visual_constraints: list[str] = Field(default_factory=list)
     reference_asset_ids: list[str] = Field(default_factory=list)
 
@@ -226,6 +264,8 @@ class FirstFrameReviewShot(ContractModel):
     role: str = Field(min_length=1)
     intent: str = Field(min_length=1)
     duration_target_seconds: float = Field(gt=0)
+    storyboard_deck: StoryboardDeckSpec
+    storyboard_board: StoryboardBoardSpec
     reference_requirements: list[ReferenceRequirement] = Field(min_length=1)
     reference_asset_ids: list[str] = Field(default_factory=list)
     first_frame_prompt_id: str = Field(min_length=1)
@@ -247,6 +287,8 @@ class ShotSpec(ContractModel):
     motion_beat: str = Field(min_length=1)
     camera_language: str = Field(min_length=1)
     duration_target_seconds: float = Field(gt=0)
+    storyboard_deck: StoryboardDeckSpec
+    storyboard_board: StoryboardBoardSpec
     reference_requirements: list[ReferenceRequirement] = Field(min_length=1)
     take_generation_defaults: TakeGenerationDefaults
     variation_hints: list[str] = Field(default_factory=list)
@@ -263,8 +305,9 @@ class CompiledShotPlan(ContractModel):
     product: ProductConceptInput
     brand: BrandRuntimeInput | None = None
     runtime_target_seconds: float = Field(gt=0)
+    storyboard_deck: StoryboardDeckSpec
     compiler_version: str = Field(default="shot-plan-compiler.v1", min_length=1)
-    shots: list[ShotSpec] = Field(min_length=1)
+    shots: list[ShotSpec] = Field(min_length=MINIMUM_STORYBOARD_BOARDS)
     status: ShotStatus = ShotStatus.PLANNED
 
     @model_validator(mode="after")
@@ -296,12 +339,13 @@ class FirstFrameReviewPayload(ContractModel):
     product: ProductConceptInput
     brand: BrandRuntimeInput | None = None
     runtime_target_seconds: float = Field(gt=0)
+    storyboard_deck: StoryboardDeckSpec
     compiler_version: str = Field(default="first-frame-review-builder.v1", min_length=1)
     aspect_ratio: str = Field(default="9:16", min_length=1)
     reference_assets: list[FirstFrameReferenceAsset] = Field(default_factory=list)
     review_guidance: list[str] = Field(default_factory=list)
     approval_gate: FirstFrameApprovalGate = Field(default_factory=FirstFrameApprovalGate)
-    shots: list[FirstFrameReviewShot] = Field(min_length=1)
+    shots: list[FirstFrameReviewShot] = Field(min_length=MINIMUM_STORYBOARD_BOARDS)
     status: FirstFrameReviewStatus = FirstFrameReviewStatus.AWAITING_REVIEW
 
     @model_validator(mode="after")

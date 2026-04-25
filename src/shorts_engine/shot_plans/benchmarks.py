@@ -106,10 +106,14 @@ TALL_OWL_REFERENCE_ASSETS = [
 ]
 
 TALL_OWL_FIRST_FRAME_REVIEW_GUIDANCE = [
-    "Select one approved first-frame/reference direction per shot before any motion work.",
+    "Select one approved storyboard board / first-frame direction per shot before any motion work.",
+    (
+        "Keep one clear beat per board with short readable copy, a consistent Tall Owl visual "
+        "world, and the same locked jar/owl/logo subject set across the full sequence."
+    ),
     "Reject stills with owl mascot drift, Vanilla Orange jar drift, fake text, or unreadable labels.",
     "Reject generic luxury skincare directions that lose the dry, sensitive, reactive skin angle.",
-    "Take generation remains blocked until the approved first-frame/reference is selected.",
+    "Take generation remains blocked until the approved storyboard board/reference is selected.",
 ]
 
 

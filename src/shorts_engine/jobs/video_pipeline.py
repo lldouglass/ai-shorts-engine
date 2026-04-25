@@ -27,6 +27,8 @@ from shorts_engine.adapters.video_gen.base import VideoGenProvider, VideoGenRequ
 from shorts_engine.adapters.video_gen.luma import LumaProvider
 from shorts_engine.adapters.video_gen.stub import StubVideoGenProvider
 from shorts_engine.config import settings
+from shorts_engine.contracts.ref_pack_v1 import RefPackV1
+from shorts_engine.contracts.shot_take_v1 import ShotTakeStatus
 from shorts_engine.db.models import AssetModel, PromptModel, SceneModel, StoryModel, VideoJobModel
 from shorts_engine.db.session import get_session_context
 from shorts_engine.domain.enums import QACheckType, QAStage, QAStatus
@@ -44,6 +46,7 @@ from shorts_engine.services.metrics import (
 )
 from shorts_engine.services.planner import PlannerService, ScenePlan, VideoPlan
 from shorts_engine.services.qa import QAFailedException, QAService
+from shorts_engine.services.shot_generation_runner import ShotGenerationRunner
 from shorts_engine.services.storage import StorageService
 from shorts_engine.utils import run_async
 from shorts_engine.worker import celery_app
@@ -89,6 +92,8 @@ def build_video_plan_from_shot_plan(
     *,
     product: shot_plans.ProductConceptInput | Mapping[str, Any] | None = None,
     brand: shot_plans.BrandRuntimeInput | Mapping[str, Any] | None = None,
+    ref_pack: RefPackV1 | Mapping[str, Any] | None = None,
+    approved_ref_ids_by_shot: Mapping[str, str] | None = None,
 ) -> VideoPlan | None:
     """Compile a deterministic shot plan into the existing video planning contract."""
     resolved = resolve_shot_plan_preset(style_preset)
@@ -102,6 +107,11 @@ def build_video_plan_from_shot_plan(
         brand=brand,
         preset_id=preset_id,
         preset_version=preset_version,
+    )
+    compiled = _apply_shot_plan_ref_pack_approvals(
+        compiled,
+        ref_pack=ref_pack,
+        approved_ref_ids_by_shot=approved_ref_ids_by_shot,
     )
     return _compiled_shot_plan_to_video_plan(compiled, style_preset)
 
@@ -160,6 +170,7 @@ def _shot_continuity_notes(shot: shot_plans.ShotSpec) -> str:
     parts = [
         f"Intent: {shot.intent}",
         f"Shot role: {shot.role}",
+        "Sequence continuity locks: " + " ".join(shot.storyboard_deck.continuity_locks),
     ]
     if shot.take_generation_defaults.notes:
         parts.append("Generation notes: " + " ".join(shot.take_generation_defaults.notes))
@@ -197,11 +208,15 @@ def _clean_sentence(value: str) -> str:
 def _build_shot_plan_video_plan_for_job(job: VideoJobModel) -> VideoPlan | None:
     product = _build_shot_plan_product_input(job.idea, job.metadata_)
     brand = _build_shot_plan_brand_input(job)
+    ref_pack = _build_shot_plan_ref_pack(job.metadata_)
+    approved_ref_ids_by_shot = _build_shot_plan_approved_ref_ids_by_shot(job.metadata_)
     return build_video_plan_from_shot_plan(
         job.idea,
         job.style_preset,
         product=product,
         brand=brand,
+        ref_pack=ref_pack,
+        approved_ref_ids_by_shot=approved_ref_ids_by_shot,
     )
 
 
@@ -233,12 +248,207 @@ def _build_shot_plan_brand_input(job: VideoJobModel) -> dict[str, Any]:
     return dict(brand_value) if isinstance(brand_value, Mapping) else {}
 
 
+def _build_shot_plan_ref_pack(
+    metadata: Mapping[str, Any] | None,
+) -> RefPackV1 | Mapping[str, Any] | None:
+    config = _shot_plan_config(metadata)
+    value = config.get("ref_pack")
+    if value is None:
+        return None
+    if isinstance(value, (RefPackV1, Mapping)):
+        return value
+    raise ValueError("shot_plan.ref_pack must be a ref_pack.v1 object or mapping")
+
+
+def _build_shot_plan_approved_ref_ids_by_shot(
+    metadata: Mapping[str, Any] | None,
+) -> dict[str, str] | None:
+    config = _shot_plan_config(metadata)
+    value = config.get("approved_ref_ids_by_shot")
+    if value is None:
+        return None
+    if not isinstance(value, Mapping):
+        raise ValueError(
+            "shot_plan.approved_ref_ids_by_shot must be a mapping of shot_id -> ref_id"
+        )
+
+    approved_ref_ids_by_shot: dict[str, str] = {}
+    for shot_id, ref_id in value.items():
+        if not isinstance(shot_id, str) or not shot_id.strip():
+            raise ValueError("shot_plan.approved_ref_ids_by_shot keys must be non-empty shot ids")
+        if not isinstance(ref_id, str) or not ref_id.strip():
+            raise ValueError(
+                "shot_plan.approved_ref_ids_by_shot values must be non-empty approved ref ids"
+            )
+        approved_ref_ids_by_shot[shot_id] = ref_id
+
+    return approved_ref_ids_by_shot
+
+
 def _shot_plan_config(metadata: Mapping[str, Any] | None) -> Mapping[str, Any]:
     if not isinstance(metadata, Mapping):
         return {}
 
     config = metadata.get("shot_plan")
     return config if isinstance(config, Mapping) else {}
+
+
+def _apply_shot_plan_ref_pack_approvals(
+    compiled: shot_plans.CompiledShotPlan,
+    *,
+    ref_pack: RefPackV1 | Mapping[str, Any] | None,
+    approved_ref_ids_by_shot: Mapping[str, str] | None,
+) -> shot_plans.CompiledShotPlan:
+    if not approved_ref_ids_by_shot:
+        return compiled
+    if ref_pack is None:
+        raise ValueError(
+            "shot_plan.ref_pack is required when shot_plan.approved_ref_ids_by_shot is provided"
+        )
+
+    return shot_plans.apply_ref_pack_approvals(
+        compiled,
+        ref_pack,
+        approved_ref_ids_by_shot,
+    )
+
+
+def _scene_shot_plan_take_request(scene: SceneModel) -> Mapping[str, Any] | None:
+    metadata = scene.metadata_ if isinstance(scene.metadata_, Mapping) else None
+    if not metadata:
+        return None
+
+    shot_plan = metadata.get("shot_plan")
+    if not isinstance(shot_plan, Mapping):
+        return None
+
+    take_request = shot_plan.get("take_request")
+    return take_request if isinstance(take_request, Mapping) else None
+
+
+def _generate_shot_plan_scene_clip(
+    *,
+    session: Any,
+    scene: SceneModel,
+    scene_id: str,
+    job_uuid: UUID,
+    video_job_id: str,
+    provider: VideoGenProvider,
+) -> dict[str, Any]:
+    take_request = _scene_shot_plan_take_request(scene)
+    if take_request is None:
+        raise ValueError(f"Scene {scene_id} is missing shot-plan take_request metadata")
+
+    storage = StorageService()
+    runner = ShotGenerationRunner(
+        video_provider=provider,
+        output_root=storage.base_path / "clips",
+    )
+    take_batch = run_async(
+        runner.generate(
+            job_id=video_job_id,
+            take_request=take_request,
+            take_count=1,
+        )
+    )
+    take = take_batch.takes[0]
+
+    if take.status != ShotTakeStatus.GENERATED:
+        error_message = take.error_message or "Shot-plan take generation failed"
+        scene.status = "failed"
+        scene.last_error = error_message
+        session.commit()
+        raise RuntimeError(error_message)
+
+    if take.asset_path is None:
+        scene.status = "failed"
+        scene.last_error = "Shot-plan take generation completed without an asset"
+        session.commit()
+        raise RuntimeError(scene.last_error)
+
+    asset_metadata = {
+        "provider": provider.name,
+        "generation_id": take.lineage.provider_job_id,
+        "shot_take_batch_id": take_batch.take_batch_id,
+        "shot_take": take.model_dump(mode="json"),
+    }
+
+    asset_path = str(take.asset_path)
+    if asset_path.startswith(("http://", "https://")):
+        download_headers = take.provider_metadata.get("download_headers")
+        stored = run_async(
+            storage.store_from_url(
+                url=asset_path,
+                asset_type="scene_clip",
+                video_job_id=job_uuid,
+                scene_id=scene.id,
+                metadata=asset_metadata,
+                headers=download_headers if isinstance(download_headers, dict) else None,
+            )
+        )
+        asset = AssetModel(
+            id=stored.id,
+            video_job_id=job_uuid,
+            scene_id=scene.id,
+            asset_type="scene_clip",
+            storage_type=stored.storage_type,
+            file_path=str(stored.file_path) if stored.file_path else None,
+            url=stored.url,
+            external_id=take.lineage.provider_job_id,
+            provider=provider.name,
+            file_size_bytes=stored.file_size_bytes,
+            duration_seconds=take.params.duration_seconds,
+            mime_type=stored.mime_type,
+            width=1080,
+            height=1920,
+            status="ready",
+            metadata_=stored.metadata,
+        )
+    else:
+        local_path = Path(asset_path)
+        if not local_path.exists():
+            raise FileNotFoundError(f"Shot-plan take asset not found: {asset_path}")
+
+        asset = AssetModel(
+            id=uuid4(),
+            video_job_id=job_uuid,
+            scene_id=scene.id,
+            asset_type="scene_clip",
+            storage_type="local",
+            file_path=str(local_path),
+            url=None,
+            external_id=take.lineage.provider_job_id,
+            provider=provider.name,
+            file_size_bytes=local_path.stat().st_size,
+            duration_seconds=take.params.duration_seconds,
+            mime_type="video/mp4",
+            width=1080,
+            height=1920,
+            status="ready",
+            metadata_=asset_metadata,
+        )
+
+    session.add(asset)
+    scene.status = "generated"
+    session.commit()
+
+    logger.info(
+        "generate_scene_clip_completed",
+        scene_id=scene_id,
+        asset_id=str(asset.id),
+        provider=provider.name,
+        shot_take_batch_id=take_batch.take_batch_id,
+        approved_board_ref_id=take.lineage.approved_board_ref_id,
+    )
+
+    return {
+        "success": True,
+        "scene_id": scene_id,
+        "asset_id": str(asset.id),
+        "storage_type": asset.storage_type,
+        "file_path": asset.file_path,
+        "url": asset.url,
+    }
 
 
 def generate_idempotency_key(project_id: str, idea: str, preset: str) -> str:
@@ -654,6 +864,18 @@ def _generate_single_scene_clip(
         session.commit()
 
         try:
+            shot_plan_take_request = _scene_shot_plan_take_request(scene)
+            provider = get_video_gen_provider()
+            if shot_plan_take_request is not None:
+                return _generate_shot_plan_scene_clip(
+                    session=session,
+                    scene=scene,
+                    scene_id=scene_id,
+                    job_uuid=job_uuid,
+                    video_job_id=video_job_id,
+                    provider=provider,
+                )
+
             # Get style preset for prompt enhancement
             preset = get_preset(job.style_preset)
             style_suffix = preset.format_style_prompt() if preset else ""
@@ -688,7 +910,6 @@ def _generate_single_scene_clip(
                     )
 
             # Generate video
-            provider = get_video_gen_provider()
             request = VideoGenRequest(
                 prompt=full_prompt,
                 duration_seconds=int(scene.duration_seconds),

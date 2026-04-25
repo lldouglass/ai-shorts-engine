@@ -61,13 +61,17 @@ class ShotGenerationRunner:
             if isinstance(take_request, ShotTakeRequest)
             else ShotTakeRequest.model_validate(take_request)
         )
-        resolved_reference_paths = [str(path) for path in (reference_asset_paths or [])]
+        resolved_reference_paths = _merge_reference_asset_paths(request, reference_asset_paths)
         resolved_take_count = take_count or request.generation_defaults.target_take_count
         if resolved_take_count < 1:
             raise ValueError("take_count must be >= 1")
 
         provider_options = dict(provider_params or {})
-        blocking_error = _blocking_error_message(request, resolved_reference_paths)
+        blocking_error = _blocking_error_message(
+            request,
+            resolved_reference_paths,
+            video_provider=self.video_provider,
+        )
         if blocking_error:
             logger.warning(
                 "shot_take_request_blocked",
@@ -228,6 +232,7 @@ class ShotGenerationRunner:
                     reference_asset_paths=reference_asset_paths,
                     provider_job_id=None,
                 ),
+                provider_metadata={},
             )
             for take_index in range(1, take_count + 1)
         ]
@@ -285,6 +290,7 @@ class ShotGenerationRunner:
                     reference_asset_paths=reference_asset_paths,
                     provider_job_id=provider_job_id,
                 ),
+                provider_metadata=dict(metadata),
             )
 
         asset_path = _resolve_asset_path(
@@ -313,6 +319,7 @@ class ShotGenerationRunner:
                     reference_asset_paths=reference_asset_paths,
                     provider_job_id=provider_job_id,
                 ),
+                provider_metadata=dict(metadata),
             )
 
         logger.info(
@@ -344,6 +351,7 @@ class ShotGenerationRunner:
                 reference_asset_paths=reference_asset_paths,
                 provider_job_id=provider_job_id,
             ),
+            provider_metadata=dict(metadata),
         )
 
 
@@ -356,6 +364,8 @@ def _default_video_provider() -> VideoGenProvider:
 def _blocking_error_message(
     take_request: ShotTakeRequest,
     reference_asset_paths: Sequence[str],
+    *,
+    video_provider: VideoGenProvider,
 ) -> str | None:
     if take_request.status == TakeRequestStatus.BLOCKED_ON_REFERENCES:
         return "Take request is blocked on approved references"
@@ -363,8 +373,24 @@ def _blocking_error_message(
     if take_request.status != TakeRequestStatus.READY:
         return f"Take request must be READY before generation (got {take_request.status})"
 
+    if (
+        take_request.generation_defaults.requires_approved_reference
+        and take_request.approved_board is None
+    ):
+        return "Approved storyboard board is required before take generation"
+
     if take_request.generation_defaults.requires_approved_reference and not reference_asset_paths:
-        return "Approved reference assets are required before take generation"
+        return "Approved storyboard board asset is required before take generation"
+
+    if (
+        take_request.generation_defaults.requires_approved_reference
+        and reference_asset_paths
+        and not video_provider.supports_reference_images
+    ):
+        return (
+            "Configured video provider does not support approved-board reference inputs "
+            "required for shot-plan generation"
+        )
 
     return None
 
@@ -393,22 +419,47 @@ def _build_take_prompt(
         take_request.subject,
         take_request.environment,
         take_request.motion_beat,
+        f"Storyboard visual world: {take_request.storyboard_deck.visual_world}",
+        f"Storyboard layout system: {take_request.storyboard_deck.layout_system}",
+        f"Storyboard layout notes: {take_request.storyboard_board.layout_notes}",
+        "Sequence continuity locks: "
+        + " ".join(take_request.storyboard_deck.continuity_locks),
         f"Intent: {take_request.intent}",
         (
             f"Generate take {take_index} of {take_count} for this shot while preserving the "
-            "approved first-frame or reference direction."
+            "approved storyboard board / first-frame direction."
         ),
     ]
+    if take_request.storyboard_board.title:
+        parts.append(f"Board title: {take_request.storyboard_board.title}")
+    if take_request.storyboard_board.hook_role:
+        parts.append(f"Board hook role: {take_request.storyboard_board.hook_role}")
+    if (
+        take_request.generation_defaults.preserve_approved_board_text
+        and take_request.storyboard_board.on_frame_text
+    ):
+        parts.append(
+            "Preserve this approved on-frame board copy exactly as the designed motion source: "
+            + take_request.storyboard_board.on_frame_text
+        )
     if variation_hint:
         parts.append(f"Variation hint: {variation_hint}")
     if take_request.generation_defaults.notes:
         parts.append("Generation notes: " + " ".join(take_request.generation_defaults.notes))
-    if take_request.generation_defaults.avoid_visible_text:
+    if (
+        take_request.generation_defaults.avoid_visible_text
+        and not take_request.generation_defaults.preserve_approved_board_text
+    ):
         parts.append("Avoid readable text, letters, numbers, labels, captions, and subtitles.")
     return ". ".join(_clean_sentence(part) for part in parts if part)
 
 
 def _build_negative_prompt(take_request: ShotTakeRequest) -> str | None:
+    if (
+        take_request.generation_defaults.preserve_approved_board_text
+        and take_request.storyboard_board.on_frame_text
+    ):
+        return "extra readable text, changed board copy, fake labels, subtitles, UI overlays"
     if not take_request.generation_defaults.avoid_visible_text:
         return None
     return "readable text, letters, numbers, labels, captions, subtitles, UI overlays"
@@ -540,6 +591,20 @@ def _build_lineage(
         preset_version=take_request.preset_version,
         sequence_order=take_request.sequence_order,
         source_plan_id=source_plan_id,
+        approved_board_ref_id=(
+            take_request.approved_board.ref_id if take_request.approved_board else None
+        ),
+        approved_board_asset_path=(
+            take_request.approved_board.asset_path if take_request.approved_board else None
+        ),
+        approved_board_source_ref_pack_id=(
+            take_request.approved_board.source_ref_pack_id if take_request.approved_board else None
+        ),
+        approved_board_source_review_payload_id=(
+            take_request.approved_board.source_review_payload_id
+            if take_request.approved_board
+            else None
+        ),
         reference_asset_paths=list(reference_asset_paths),
         provider_job_id=provider_job_id,
         request_metadata=dict(take_request.metadata),
@@ -571,3 +636,28 @@ def _clean_sentence(value: str) -> str:
 
 def _looks_like_url(value: str) -> bool:
     return value.startswith("http://") or value.startswith("https://")
+
+
+def _merge_reference_asset_paths(
+    take_request: ShotTakeRequest,
+    reference_asset_paths: Sequence[str | Path] | None,
+) -> list[str]:
+    merged: list[str] = []
+    seen: set[str] = set()
+
+    approved_board_path = (
+        take_request.approved_board.asset_path if take_request.approved_board else None
+    )
+    if approved_board_path:
+        normalized = str(approved_board_path)
+        merged.append(normalized)
+        seen.add(normalized)
+
+    for value in reference_asset_paths or []:
+        normalized = str(value)
+        if normalized in seen:
+            continue
+        merged.append(normalized)
+        seen.add(normalized)
+
+    return merged
