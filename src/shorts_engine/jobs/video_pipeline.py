@@ -471,6 +471,10 @@ def get_video_gen_provider() -> VideoGenProvider:
         from shorts_engine.adapters.video_gen.kling import KlingProvider
 
         return KlingProvider()
+    elif provider == "seedance":
+        from shorts_engine.adapters.video_gen.seedance import SeedanceProvider
+
+        return SeedanceProvider()
     else:
         return StubVideoGenProvider()
 

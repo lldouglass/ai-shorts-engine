@@ -54,7 +54,7 @@ class Settings(BaseSettings):
     # Providers
     video_gen_provider: str = Field(
         default="stub",
-        description="Video generation provider (stub, luma, veo, kling)",
+        description="Video generation provider (stub, luma, veo, kling, seedance)",
     )
     renderer_provider: str = Field(
         default="stub",
@@ -142,7 +142,7 @@ class Settings(BaseSettings):
         default=None, description="Creatomate webhook URL for render completion"
     )
     fal_api_key: str | None = Field(
-        default=None, description="fal.ai API key for Kling video generation"
+        default=None, description="fal.ai API key for fal-hosted video generation (Kling, Seedance)"
     )
     elevenlabs_api_key: str | None = Field(default=None, description="ElevenLabs API key")
     instagram_access_token: str | None = Field(default=None, description="Instagram access token")

@@ -77,9 +77,22 @@ class PipelineService:
 
         if provider_name == "stub":
             return StubVideoGenProvider()
-        # Add other providers here as they're implemented
-        # elif provider_name == "openai_sora":
-        #     return OpenAISoraProvider()
+        elif provider_name == "kling":
+            from shorts_engine.adapters.video_gen.kling import KlingProvider
+
+            return KlingProvider()
+        elif provider_name == "seedance":
+            from shorts_engine.adapters.video_gen.seedance import SeedanceProvider
+
+            return SeedanceProvider()
+        elif provider_name == "veo":
+            from shorts_engine.adapters.video_gen.veo import VeoProvider
+
+            return VeoProvider(model=settings.veo_model)
+        elif provider_name == "luma":
+            from shorts_engine.adapters.video_gen.luma import LumaProvider
+
+            return LumaProvider()
 
         logger.warning(f"Unknown video_gen_provider '{provider_name}', using stub")
         return StubVideoGenProvider()
