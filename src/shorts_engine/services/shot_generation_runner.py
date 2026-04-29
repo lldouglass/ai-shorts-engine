@@ -117,6 +117,9 @@ class ShotGenerationRunner:
             request_provider_params = dict(provider_options)
             if seed is not None:
                 request_provider_params.setdefault("seed", seed)
+            artifact_provider_params = _sanitize_provider_params_for_contract(
+                request_provider_params
+            )
 
             take_params = ShotTakeParams(
                 aspect_ratio=aspect_ratio,
@@ -130,7 +133,7 @@ class ShotGenerationRunner:
                 take_index=take_index,
                 reference_asset_paths=resolved_reference_paths,
                 variation_hint=_variation_hint_for_take(request, take_index),
-                provider_params=request_provider_params,
+                provider_params=artifact_provider_params,
             )
 
             take_id = _build_take_id(request.take_request_id, take_index)
@@ -220,7 +223,7 @@ class ShotGenerationRunner:
                     take_index=take_index,
                     reference_asset_paths=list(reference_asset_paths),
                     variation_hint=_variation_hint_for_take(take_request, take_index),
-                    provider_params=dict(provider_params),
+                    provider_params=_sanitize_provider_params_for_contract(provider_params),
                 ),
                 seed=_resolve_seed(job_id, take_request, take_index),
                 cost_estimate=None,
@@ -485,6 +488,30 @@ def _resolve_seed(job_id: str, take_request: ShotTakeRequest, take_index: int) -
         json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
     ).hexdigest()
     return int(digest[:8], 16)
+
+
+def _sanitize_provider_params_for_contract(provider_params: Mapping[str, Any]) -> dict[str, Any]:
+    """Keep provider params JSON-safe in typed take artifacts."""
+    return {
+        str(key): _sanitize_provider_param_value(value)
+        for key, value in provider_params.items()
+    }
+
+
+def _sanitize_provider_param_value(value: Any) -> Any:
+    """Replace raw binary payloads with compact metadata summaries."""
+    if isinstance(value, (bytes, bytearray, memoryview)):
+        return f"<binary:{len(bytes(value))} bytes>"
+    if isinstance(value, Mapping):
+        return {
+            str(key): _sanitize_provider_param_value(nested_value)
+            for key, nested_value in value.items()
+        }
+    if isinstance(value, list):
+        return [_sanitize_provider_param_value(item) for item in value]
+    if isinstance(value, tuple):
+        return [_sanitize_provider_param_value(item) for item in value]
+    return value
 
 
 def _build_take_id(take_request_id: str, take_index: int) -> str:

@@ -333,6 +333,58 @@ async def test_pipeline_take_request_handoff_preserves_approved_board_lineage(
 
 
 @pytest.mark.asyncio
+async def test_binary_provider_options_are_sanitized_in_artifact_but_preserved_for_provider(
+    tmp_path: Path,
+) -> None:
+    """Binary provider options should reach the provider but stay JSON-safe in artifacts."""
+    plan = compile_tall_owl_benchmark_shot_plan()
+    reference_paths = _approved_reference_paths(tmp_path)
+    take_request = plan.shots[0].take_request.model_copy(
+        update={
+            "status": TakeRequestStatus.READY,
+            "approved_board": ApprovedStoryboardBoard(
+                ref_id=f"{plan.shots[0].shot_id}_ref_01",
+                asset_path=reference_paths[0],
+            ),
+        }
+    )
+    provider = FakeVideoGenProvider(
+        [
+            VideoGenResult(
+                success=True,
+                video_data=b"BINARY_OPTION_TAKE",
+                metadata={"generation_id": "gen-binary-01", "model": "fake-video-model"},
+            )
+        ]
+    )
+    runner = ShotGenerationRunner(
+        video_provider=provider,
+        output_root=tmp_path / "shot_takes",
+        now_factory=lambda: datetime(2026, 4, 21, 19, 1, tzinfo=UTC),
+    )
+
+    artifact = await runner.generate(
+        job_id="job-binary-provider-option-001",
+        take_request=take_request,
+        reference_asset_paths=reference_paths,
+        take_count=1,
+        provider_params={"end_reference_image": PNG_BYTES},
+    )
+
+    assert len(provider.requests) == 1
+    assert provider.requests[0].options is not None
+    assert provider.requests[0].options["end_reference_image"] == PNG_BYTES
+    assert artifact.takes[0].params.provider_params["end_reference_image"] == (
+        f"<binary:{len(PNG_BYTES)} bytes>"
+    )
+
+    serialized = json.loads(artifact.model_dump_json())
+    assert serialized["takes"][0]["params"]["provider_params"]["end_reference_image"] == (
+        f"<binary:{len(PNG_BYTES)} bytes>"
+    )
+
+
+@pytest.mark.asyncio
 async def test_failed_takes_are_kept_in_the_batch_instead_of_dropped(tmp_path: Path) -> None:
     """Failed take attempts stay visible in the artifact output."""
     plan = compile_tall_owl_benchmark_shot_plan()

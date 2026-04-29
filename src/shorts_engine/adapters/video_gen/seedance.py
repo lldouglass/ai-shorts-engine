@@ -27,7 +27,9 @@ class SeedanceProvider(VideoGenProvider):
 
     FAL_MODEL = "bytedance/seedance-2.0/text-to-video"
     FAL_MODEL_IMG2VID = "bytedance/seedance-2.0/image-to-video"
+    FAL_MODEL_REF2VID = "bytedance/seedance-2.0/reference-to-video"
     DEFAULT_RESOLUTION = "720p"
+    END_REFERENCE_IMAGE_OPTION = "end_reference_image"
 
     def __init__(self, api_key: str | None = None) -> None:
         self.api_key = api_key or getattr(settings, "fal_api_key", None)
@@ -79,28 +81,34 @@ class SeedanceProvider(VideoGenProvider):
         options = dict(request.options or {})
         resolution = str(options.get("resolution") or self.DEFAULT_RESOLUTION)
         generate_audio = bool(options.get("generate_audio", False))
+        seed = self._resolve_seed_option(options.get("seed"))
+        reference_images = list(request.reference_images or [])
 
-        has_reference = bool(request.reference_images and len(request.reference_images) > 0)
-        if has_reference:
-            image_url = await self._upload_reference_image(request.reference_images[0])
+        has_reference = bool(reference_images)
+        arguments: dict[str, Any] = {
+            "prompt": full_prompt,
+            "duration": duration,
+            "aspect_ratio": aspect_ratio,
+            "resolution": resolution,
+            "generate_audio": generate_audio,
+        }
+        if seed is not None:
+            arguments["seed"] = seed
+
+        if len(reference_images) > 1:
+            model = self.FAL_MODEL_REF2VID
+            arguments["image_urls"] = await self._upload_reference_images(reference_images)
+            arguments["prompt"] = self._build_reference_prompt(full_prompt, len(reference_images))
+        elif len(reference_images) == 1:
             model = self.FAL_MODEL_IMG2VID
-            arguments: dict[str, Any] = {
-                "prompt": full_prompt,
-                "image_url": image_url,
-                "duration": duration,
-                "aspect_ratio": aspect_ratio,
-                "resolution": resolution,
-                "generate_audio": generate_audio,
-            }
+            arguments["image_url"] = await self._upload_reference_image(reference_images[0])
+            end_image_url = await self._resolve_end_reference_image_url(
+                options.get(self.END_REFERENCE_IMAGE_OPTION)
+            )
+            if end_image_url:
+                arguments["end_image_url"] = end_image_url
         else:
             model = self.FAL_MODEL
-            arguments = {
-                "prompt": full_prompt,
-                "duration": duration,
-                "aspect_ratio": aspect_ratio,
-                "resolution": resolution,
-                "generate_audio": generate_audio,
-            }
 
         logger.info(
             "seedance_generation_started",
@@ -110,6 +118,9 @@ class SeedanceProvider(VideoGenProvider):
             aspect_ratio=aspect_ratio,
             resolution=resolution,
             has_reference=has_reference,
+            reference_image_count=len(reference_images),
+            has_end_reference_image=bool(arguments.get("end_image_url")),
+            has_seed=seed is not None,
         )
 
         try:
@@ -167,6 +178,52 @@ class SeedanceProvider(VideoGenProvider):
             return url
         finally:
             Path(temp_path).unlink(missing_ok=True)
+
+    async def _upload_reference_images(self, reference_images: list[bytes]) -> list[str]:
+        """Upload multiple reference images for Seedance reference-to-video."""
+        return [await self._upload_reference_image(image_bytes) for image_bytes in reference_images]
+
+    @staticmethod
+    def _build_reference_prompt(prompt: str, image_count: int) -> str:
+        """Guide Seedance to use uploaded reference images when multiple are available."""
+        if any(f"@Image{index}" in prompt for index in range(1, image_count + 1)):
+            return prompt
+
+        if image_count == 2:
+            prefix = (
+                "@Image1 is the primary approved board / first-frame direction. "
+                "@Image2 is an additional visual continuity reference."
+            )
+        else:
+            prefix = (
+                "@Image1 is the primary approved board / first-frame direction. "
+                f"Use @Image2 through @Image{image_count} as additional visual continuity "
+                "references."
+            )
+        return f"{prefix} {prompt}"
+
+    @staticmethod
+    def _resolve_seed_option(value: Any) -> int | None:
+        """Normalize the optional Seedance seed value."""
+        if value is None:
+            return None
+        if isinstance(value, bool):
+            raise ValueError("Seedance seed option must be an integer")
+        if isinstance(value, int):
+            return value
+        if isinstance(value, str) and value.strip():
+            return int(value.strip())
+        raise ValueError("Seedance seed option must be an integer")
+
+    async def _resolve_end_reference_image_url(self, value: Any) -> str | None:
+        """Resolve a minimal end-frame option into Seedance's end_image_url field."""
+        if value is None:
+            return None
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+        if isinstance(value, (bytes, bytearray)):
+            return await self._upload_reference_image(bytes(value))
+        raise TypeError("Seedance end_reference_image option must be bytes or a URL string")
 
     async def check_status(self, job_id: str) -> dict[str, Any]:
         """Check generation status through fal.ai."""
