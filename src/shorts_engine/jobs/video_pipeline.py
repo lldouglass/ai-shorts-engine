@@ -326,9 +326,85 @@ def _scene_shot_plan_take_request(scene: SceneModel) -> Mapping[str, Any] | None
     return take_request if isinstance(take_request, Mapping) else None
 
 
+def _resolve_shot_plan_reference_asset_paths(
+    *,
+    scene: SceneModel,
+    job: VideoJobModel,
+) -> list[str]:
+    take_request = _scene_shot_plan_take_request(scene)
+    if take_request is None:
+        return []
+
+    approved_board_path = _approved_board_asset_path(take_request)
+    shot_id = take_request.get("shot_id")
+    if not isinstance(shot_id, str) or not shot_id.strip():
+        return _ordered_reference_asset_paths(
+            approved_board_path=approved_board_path,
+            candidate_asset_paths=[],
+        )
+
+    ref_pack = _validated_shot_plan_ref_pack(job.metadata_)
+    if ref_pack is None:
+        return _ordered_reference_asset_paths(
+            approved_board_path=approved_board_path,
+            candidate_asset_paths=[],
+        )
+
+    shot_group = next((group for group in ref_pack.shots if group.shot_id == shot_id), None)
+    candidate_asset_paths = (
+        [candidate.asset_path for candidate in shot_group.reference_candidates]
+        if shot_group is not None
+        else []
+    )
+    return _ordered_reference_asset_paths(
+        approved_board_path=approved_board_path,
+        candidate_asset_paths=candidate_asset_paths,
+    )
+
+
+def _validated_shot_plan_ref_pack(
+    metadata: Mapping[str, Any] | None,
+) -> RefPackV1 | None:
+    ref_pack = _build_shot_plan_ref_pack(metadata)
+    if ref_pack is None:
+        return None
+    if isinstance(ref_pack, RefPackV1):
+        return ref_pack
+    return RefPackV1.model_validate(ref_pack)
+
+
+def _approved_board_asset_path(take_request: Mapping[str, Any]) -> str | None:
+    approved_board = take_request.get("approved_board")
+    if not isinstance(approved_board, Mapping):
+        return None
+
+    asset_path = approved_board.get("asset_path")
+    if not isinstance(asset_path, str) or not asset_path.strip():
+        return None
+    return asset_path
+
+
+def _ordered_reference_asset_paths(
+    *,
+    approved_board_path: str | None,
+    candidate_asset_paths: list[str],
+) -> list[str]:
+    ordered_paths: list[str] = []
+    seen: set[str] = set()
+
+    for asset_path in [approved_board_path, *candidate_asset_paths]:
+        if not asset_path or asset_path in seen:
+            continue
+        ordered_paths.append(asset_path)
+        seen.add(asset_path)
+
+    return ordered_paths
+
+
 def _generate_shot_plan_scene_clip(
     *,
     session: Any,
+    job: VideoJobModel,
     scene: SceneModel,
     scene_id: str,
     job_uuid: UUID,
@@ -344,10 +420,12 @@ def _generate_shot_plan_scene_clip(
         video_provider=provider,
         output_root=storage.base_path / "clips",
     )
+    reference_asset_paths = _resolve_shot_plan_reference_asset_paths(scene=scene, job=job)
     take_batch = run_async(
         runner.generate(
             job_id=video_job_id,
             take_request=take_request,
+            reference_asset_paths=reference_asset_paths,
             take_count=1,
         )
     )
@@ -873,6 +951,7 @@ def _generate_single_scene_clip(
             if shot_plan_take_request is not None:
                 return _generate_shot_plan_scene_clip(
                     session=session,
+                    job=job,
                     scene=scene,
                     scene_id=scene_id,
                     job_uuid=job_uuid,

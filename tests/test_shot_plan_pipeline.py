@@ -279,11 +279,11 @@ async def test_plan_job_task_persists_approved_board_lineage_in_scene_take_reque
     assert second_take_request["approved_board"] is None
 
 
-def test_generate_single_scene_clip_uses_approved_board_reference_flow(
+def test_generate_single_scene_clip_passes_all_per_shot_reference_candidates(
     monkeypatch,
     tmp_path,
 ) -> None:
-    """Shot-plan scene generation must animate from the approved board instead of freehanding."""
+    """Live shot-plan scene generation should pass the approved board plus extra refs."""
     job_id = uuid4()
     scene_id = uuid4()
     product = _product_input()
@@ -307,6 +307,7 @@ def test_generate_single_scene_clip_uses_approved_board_reference_flow(
         )
     )
     approved_candidate = ref_pack.shots[0].reference_candidates[0]
+    second_candidate = ref_pack.shots[0].reference_candidates[1]
     video_plan = video_pipeline.build_video_plan_from_shot_plan(
         "Aurum Glow Serum premium ad",
         f"{video_pipeline.SHOT_PLAN_STYLE_PREFIX}{FLAGSHIP_PRESET_ID}",
@@ -333,6 +334,7 @@ def test_generate_single_scene_clip_uses_approved_board_reference_flow(
     job = SimpleNamespace(
         id=job_id,
         style_preset=f"{video_pipeline.SHOT_PLAN_STYLE_PREFIX}{FLAGSHIP_PRESET_ID}",
+        metadata_={"shot_plan": {"ref_pack": ref_pack.model_dump(mode="json")}},
     )
     fake_session = _FakeGenerateSceneSession(job=job, scene=scene)
     provider = FakeVideoGenProvider(
@@ -356,16 +358,31 @@ def test_generate_single_scene_clip_uses_approved_board_reference_flow(
         def __init__(self) -> None:
             super().__init__(base_path=tmp_path / "storage")
 
+    real_runner_cls = video_pipeline.ShotGenerationRunner
+    captured_runner_inputs: dict[str, Any] = {}
+
+    class CapturingShotGenerationRunner(real_runner_cls):
+        async def generate(self, **kwargs: Any):
+            captured_runner_inputs["reference_asset_paths"] = list(
+                kwargs.get("reference_asset_paths") or []
+            )
+            return await super().generate(**kwargs)
+
     monkeypatch.setattr(video_pipeline, "get_session_context", fake_session_context)
     monkeypatch.setattr(video_pipeline, "get_video_gen_provider", lambda: provider)
     monkeypatch.setattr(video_pipeline, "StorageService", TestStorageService)
+    monkeypatch.setattr(video_pipeline, "ShotGenerationRunner", CapturingShotGenerationRunner)
 
     result = video_pipeline._generate_single_scene_clip(str(scene_id), str(job_id))
 
     assert result["success"] is True
+    assert captured_runner_inputs["reference_asset_paths"] == [
+        approved_candidate.asset_path,
+        second_candidate.asset_path,
+    ]
     assert len(provider.requests) == 1
     assert provider.requests[0].reference_images is not None
-    assert len(provider.requests[0].reference_images) == 1
+    assert len(provider.requests[0].reference_images) == 2
     assert "approved storyboard board / first-frame direction" in provider.requests[0].prompt
     assert scene.status == "generated"
     assert scene.last_error is None
@@ -374,6 +391,10 @@ def test_generate_single_scene_clip_uses_approved_board_reference_flow(
     asset = fake_session.assets[0]
     assert asset.file_path == result["file_path"]
     assert asset.file_path is not None
+    assert asset.metadata_["shot_take"]["params"]["reference_asset_paths"] == [
+        approved_candidate.asset_path,
+        second_candidate.asset_path,
+    ]
     assert asset.metadata_["shot_take"]["lineage"]["approved_board_ref_id"] == approved_candidate.ref_id
     assert (
         asset.metadata_["shot_take"]["lineage"]["approved_board_asset_path"]
