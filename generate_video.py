@@ -3,7 +3,7 @@
 Generates a complete AI short video using:
 - StoryGenerator for story with strong hooks and unique premises
 - PlannerService with target_duration to match voiceover length
-- Google Veo for video generation
+- Configured video provider for video generation
 - ElevenLabs for voiceover (using story narrative)
 - MoviePy for local rendering
 
@@ -12,6 +12,8 @@ Usage:
     python generate_video.py --topic "..." --style ANIME_REALISM --voice dramatic
     python generate_video.py --topic "..." --duration 45 --no-voiceover
 """
+
+# ruff: noqa: E402
 
 import argparse
 import asyncio
@@ -42,8 +44,8 @@ from shorts_engine.adapters.renderer.creatomate import (
     SceneClip,
 )
 from shorts_engine.adapters.renderer.moviepy_renderer import MoviePyRenderer
-from shorts_engine.adapters.video_gen.veo import VeoProvider
 from shorts_engine.adapters.voiceover.elevenlabs import ElevenLabsProvider
+from shorts_engine.jobs.video_pipeline import get_video_gen_provider
 from shorts_engine.logging import get_logger
 from shorts_engine.presets.styles import get_preset, get_preset_names
 from shorts_engine.services.planner import PlannerService, VideoPlan
@@ -258,16 +260,16 @@ async def generate_video_clips(
     frame_chaining_enabled: bool = True,
     output_dir: Path | None = None,
 ) -> list[Path]:
-    """Generate video clips using Veo with frame chaining for consistency."""
+    """Generate video clips using the configured provider with frame chaining."""
     print("\n" + "=" * 60)
-    print("[VIDEO] Generating video clips with Veo...")
+    provider = get_video_gen_provider()
+    print(f"[VIDEO] Generating video clips with {provider.name}...")
     print("=" * 60)
 
     preset = get_preset(plan.style_preset)
     style_suffix = f", {preset.format_style_prompt()}" if preset else ""
     negative_prompt = preset.format_negative_prompt() if preset else None
 
-    veo = VeoProvider()
     clips_dir = (output_dir or Path("output")) / "clips"
     clips_dir.mkdir(parents=True, exist_ok=True)
 
@@ -304,7 +306,7 @@ async def generate_video_clips(
             reference_images=reference_images,
         )
 
-        result = await veo.generate(request)
+        result = await provider.generate(request)
 
         if not result.success:
             print(f"   [FAIL] {result.error_message}")

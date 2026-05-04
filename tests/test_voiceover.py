@@ -219,19 +219,23 @@ class TestElevenLabsProvider:
         assert "dramatic" in ElevenLabsProvider.DEFAULT_VOICES
         assert "energetic" in ElevenLabsProvider.DEFAULT_VOICES
 
-    def test_provider_without_api_key(self):
+    def test_provider_without_api_key(self, monkeypatch):
         """Test provider initialization without API key."""
         from shorts_engine.adapters.voiceover.elevenlabs import ElevenLabsProvider
+        from shorts_engine.config import settings
 
+        monkeypatch.setattr(settings, "elevenlabs_api_key", None)
         provider = ElevenLabsProvider()
         # Should not raise, but will warn
         assert provider.api_key is None
 
     @pytest.mark.asyncio
-    async def test_generate_without_api_key(self):
+    async def test_generate_without_api_key(self, monkeypatch):
         """Test that generate fails gracefully without API key."""
         from shorts_engine.adapters.voiceover.elevenlabs import ElevenLabsProvider
+        from shorts_engine.config import settings
 
+        monkeypatch.setattr(settings, "elevenlabs_api_key", None)
         provider = ElevenLabsProvider()  # No API key
         request = VoiceoverRequest(text="Test")
 
